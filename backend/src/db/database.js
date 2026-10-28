@@ -149,6 +149,8 @@ const migrations = [
   `ALTER TABLE exam_questions ADD COLUMN test_driver TEXT`,
   `ALTER TABLE exam_questions ADD COLUMN language TEXT NOT NULL DEFAULT 'java'`,
   `ALTER TABLE exam_answers ADD COLUMN test_case_results TEXT`,
+  `ALTER TABLE exams ADD COLUMN shuffle_questions INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE exams ADD COLUMN shuffle_options INTEGER NOT NULL DEFAULT 0`,
 ];
 for (const sql of migrations) {
   try {

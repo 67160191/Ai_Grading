@@ -5,6 +5,7 @@ import { logActivity } from "../middleware/logger.js";
 import { getGradingSettings } from "../services/grading.js";
 import { formatExportResponse } from "../utils/export.js";
 import { executeCode, runTestCases } from "../services/codeRunner.js";
+import { seededShuffle } from "../utils/shuffle.js";
 
 const router = Router();
 
@@ -81,7 +82,17 @@ router.post(
   requireRole("teacher", "admin"),
   (req, res) => {
     const { courseId } = req.params;
-    const { title, description, duration_minutes, is_open, allow_paste, require_fullscreen, questions } = req.body;
+    const {
+      title,
+      description,
+      duration_minutes,
+      is_open,
+      allow_paste,
+      require_fullscreen,
+      shuffle_questions,
+      shuffle_options,
+      questions,
+    } = req.body;
 
     if (!title || !title.trim()) {
       return res.status(400).json({ error: "กรุณาระบุชื่อห้องสอบ" });
@@ -97,10 +108,12 @@ router.post(
     const isOpenVal = is_open !== undefined ? (is_open ? 1 : 0) : 1;
     const allowPasteVal = allow_paste !== undefined ? (allow_paste ? 1 : 0) : 1;
     const requireFsVal = require_fullscreen !== undefined ? (require_fullscreen ? 1 : 0) : 0;
+    const shuffleQVal = shuffle_questions !== undefined ? (shuffle_questions ? 1 : 0) : 0;
+    const shuffleOptVal = shuffle_options !== undefined ? (shuffle_options ? 1 : 0) : 0;
 
     const insertExam = db.prepare(`
-      INSERT INTO exams (course_id, title, description, duration_minutes, is_open, is_published, allow_paste, require_fullscreen, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+      INSERT INTO exams (course_id, title, description, duration_minutes, is_open, is_published, allow_paste, require_fullscreen, shuffle_questions, shuffle_options, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertQuestion = db.prepare(`
@@ -118,6 +131,8 @@ router.post(
         isOpenVal,
         allowPasteVal,
         requireFsVal,
+        shuffleQVal,
+        shuffleOptVal,
         now,
         now,
       );
@@ -235,7 +250,7 @@ router.get("/exams/:id", authenticate, (req, res) => {
   // Hide correct_option and solution_guide for students unless published and graded
   const showAnswers = exam.is_published === 1 && submission?.status === "graded";
 
-  const questions = db
+  let questions = db
     .prepare("SELECT * FROM exam_questions WHERE exam_id = ? ORDER BY question_order ASC")
     .all(id)
     .map((q) => {
@@ -247,6 +262,20 @@ router.get("/exams/:id", authenticate, (req, res) => {
           opts = [];
         }
       }
+
+      // Structure options and deterministically shuffle if enabled
+      let formattedOpts = opts.map((opt, oIdx) => {
+        if (typeof opt === "object" && opt !== null) {
+          return { id: String(opt.id || oIdx + 1), text: opt.text || "" };
+        }
+        return { id: String(oIdx + 1), text: String(opt) };
+      });
+
+      if (exam.shuffle_options) {
+        const optSeed = req.user.id * 10007 + q.id * 7919;
+        formattedOpts = seededShuffle(formattedOpts, optSeed);
+      }
+
       let tcs = [];
       if (q.test_cases) {
         try {
@@ -277,7 +306,7 @@ router.get("/exams/:id", authenticate, (req, res) => {
         question_type: q.question_type,
         prompt: q.prompt,
         points: q.points,
-        options: opts,
+        options: formattedOpts,
         starter_code: q.starter_code,
         language: q.language || "java",
         test_cases: studentTestCases,
@@ -285,6 +314,12 @@ router.get("/exams/:id", authenticate, (req, res) => {
         solution_guide: showAnswers ? q.solution_guide : undefined,
       };
     });
+
+  // Deterministically shuffle questions array per student if enabled
+  if (exam.shuffle_questions) {
+    const qSeed = req.user.id * 10007 + exam.id * 31337;
+    questions = seededShuffle(questions, qSeed);
+  }
 
   let remainingSeconds = null;
   let existingAnswers = {};
@@ -314,6 +349,8 @@ router.get("/exams/:id", authenticate, (req, res) => {
       is_published: exam.is_published,
       allow_paste: exam.allow_paste ?? 1,
       require_fullscreen: exam.require_fullscreen ?? 0,
+      shuffle_questions: exam.shuffle_questions ?? 0,
+      shuffle_options: exam.shuffle_options ?? 0,
     },
     course: { id: course.id, name: course.name },
     questions,
@@ -334,13 +371,26 @@ router.put("/exams/:id", authenticate, requireRole("teacher", "admin"), (req, re
     return res.status(403).json({ error: "คุณไม่มีสิทธิ์แก้ไขห้องสอบนี้" });
   }
 
-  const { title, description, duration_minutes, is_open, is_published, allow_paste, require_fullscreen, questions } = req.body;
+  const {
+    title,
+    description,
+    duration_minutes,
+    is_open,
+    is_published,
+    allow_paste,
+    require_fullscreen,
+    shuffle_questions,
+    shuffle_options,
+    questions,
+  } = req.body;
 
   const duration = duration_minutes !== undefined ? Math.max(parseInt(duration_minutes) || 60, 5) : exam.duration_minutes;
   const openVal = is_open !== undefined ? (is_open ? 1 : 0) : exam.is_open;
   const pubVal = is_published !== undefined ? (is_published ? 1 : 0) : exam.is_published;
   const pasteVal = allow_paste !== undefined ? (allow_paste ? 1 : 0) : (exam.allow_paste ?? 1);
   const reqFsVal = require_fullscreen !== undefined ? (require_fullscreen ? 1 : 0) : (exam.require_fullscreen ?? 0);
+  const shuffleQVal = shuffle_questions !== undefined ? (shuffle_questions ? 1 : 0) : (exam.shuffle_questions ?? 0);
+  const shuffleOptVal = shuffle_options !== undefined ? (shuffle_options ? 1 : 0) : (exam.shuffle_options ?? 0);
 
   const updateTx = db.transaction(() => {
     db.prepare(`
@@ -352,9 +402,23 @@ router.put("/exams/:id", authenticate, requireRole("teacher", "admin"), (req, re
           is_published = ?,
           allow_paste = ?,
           require_fullscreen = ?,
+          shuffle_questions = ?,
+          shuffle_options = ?,
           updated_at = ?
       WHERE id = ?
-    `).run(title ? title.trim() : null, description !== undefined ? description : null, duration, openVal, pubVal, pasteVal, reqFsVal, nowUTC(), id);
+    `).run(
+      title ? title.trim() : null,
+      description !== undefined ? description : null,
+      duration,
+      openVal,
+      pubVal,
+      pasteVal,
+      reqFsVal,
+      shuffleQVal,
+      shuffleOptVal,
+      nowUTC(),
+      id,
+    );
 
     // If questions are provided, check if submissions exist
     if (Array.isArray(questions)) {
@@ -608,7 +672,22 @@ router.post("/exams/:id/submit", authenticate, requireRole("student"), (req, res
       let isCorrect = null;
 
       if (q.question_type === "mcq") {
-        if (q.correct_option && rawAns === String(q.correct_option).trim()) {
+        let opts = [];
+        try {
+          opts = JSON.parse(q.options || "[]");
+        } catch {
+          opts = [];
+        }
+        const correctOptId = String(q.correct_option || "").trim();
+        const correctOptIdx = parseInt(correctOptId) - 1;
+        const correctOptText = (correctOptIdx >= 0 && correctOptIdx < opts.length)
+          ? String(typeof opts[correctOptIdx] === "string" ? opts[correctOptIdx] : opts[correctOptIdx]?.text || "").trim()
+          : "";
+
+        const isMatch = (correctOptId && rawAns === correctOptId) ||
+                        (correctOptText && rawAns === correctOptText);
+
+        if (isMatch) {
           autoScore = q.points;
           manualScore = q.points;
           isCorrect = 1;

@@ -439,6 +439,16 @@ export default function StudentExamTakePage() {
               🖥️ โหมดเต็มจอ
             </span>
           )}
+          {exam?.shuffle_questions === 1 && (
+            <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-medium">
+              🔀 สลับลำดับข้อ
+            </span>
+          )}
+          {exam?.shuffle_options === 1 && (
+            <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-medium">
+              🔀 สลับช้อยส์
+            </span>
+          )}
           <button
             type="button"
             onClick={runAutoSave}

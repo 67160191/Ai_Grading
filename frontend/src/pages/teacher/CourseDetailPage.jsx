@@ -163,6 +163,8 @@ export default function CourseDetailPage() {
     is_open: true,
     allow_paste: true,
     require_fullscreen: false,
+    shuffle_questions: false,
+    shuffle_options: false,
     questions: [
       {
         question_type: "mcq",
@@ -237,6 +239,8 @@ export default function CourseDetailPage() {
       is_open: true,
       allow_paste: true,
       require_fullscreen: false,
+      shuffle_questions: false,
+      shuffle_options: false,
       questions: [
         {
           question_type: "mcq",
@@ -261,6 +265,8 @@ export default function CourseDetailPage() {
       is_open: !!exam.is_open,
       allow_paste: exam.allow_paste !== 0,
       require_fullscreen: !!exam.require_fullscreen,
+      shuffle_questions: !!exam.shuffle_questions,
+      shuffle_options: !!exam.shuffle_options,
       questions: [],
     });
     setShowExamModal(true);
@@ -1139,6 +1145,16 @@ export default function CourseDetailPage() {
                           ยังไม่ประกาศคะแนน
                         </span>
                       )}
+                      {e.shuffle_questions ? (
+                        <span className="text-[11px] bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full font-medium">
+                          🔀 สลับข้อ
+                        </span>
+                      ) : null}
+                      {e.shuffle_options ? (
+                        <span className="text-[11px] bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full font-medium">
+                          🔀 สลับช้อยส์
+                        </span>
+                      ) : null}
                     </div>
                     {e.description && (
                       <p className="text-xs text-gray-500 mt-1">{e.description}</p>
@@ -1254,6 +1270,10 @@ export default function CourseDetailPage() {
                       description: examForm.description,
                       duration_minutes: examForm.duration_minutes,
                       is_open: examForm.is_open,
+                      allow_paste: examForm.allow_paste,
+                      require_fullscreen: examForm.require_fullscreen,
+                      shuffle_questions: examForm.shuffle_questions,
+                      shuffle_options: examForm.shuffle_options,
                     },
                   });
                 } else {
@@ -1341,6 +1361,28 @@ export default function CourseDetailPage() {
                       className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
                     />
                     <span className="text-gray-700 font-medium">🖥️ บังคับทำในโหมดเต็มจอ (Require Fullscreen)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!examForm.shuffle_questions}
+                      onChange={(e) =>
+                        setExamForm((prev) => ({ ...prev, shuffle_questions: e.target.checked }))
+                      }
+                      className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                    />
+                    <span className="text-gray-700 font-medium">🔀 สลับลำดับข้อสอบอัตโนมัติ (Shuffle Questions)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!examForm.shuffle_options}
+                      onChange={(e) =>
+                        setExamForm((prev) => ({ ...prev, shuffle_options: e.target.checked }))
+                      }
+                      className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                    />
+                    <span className="text-gray-700 font-medium">🔀 สลับตัวเลือกปรนัย A,B,C,D (Shuffle Options)</span>
                   </label>
                 </div>
               </div>

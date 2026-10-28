@@ -254,6 +254,16 @@ export default function ExamGradingPage() {
                   บังคับเต็มจอ
                 </span>
               )}
+              {exam?.shuffle_questions === 1 && (
+                <span className="bg-indigo-100 text-indigo-700 text-[11px] px-2 py-0.5 rounded font-medium">
+                  สลับลำดับข้อ
+                </span>
+              )}
+              {exam?.shuffle_options === 1 && (
+                <span className="bg-indigo-100 text-indigo-700 text-[11px] px-2 py-0.5 rounded font-medium">
+                  สลับช้อยส์
+                </span>
+              )}
             </div>
             <h1 className="text-2xl font-bold text-gray-900 mt-1">{exam?.title}</h1>
             {exam?.description && (
