@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "../../context/ToastContext";
-import { getExam, startExam, submitExam } from "../../api/exams";
+import { getExam, startExam, submitExam, autosaveExam } from "../../api/exams";
+import CodeEditor from "../../components/CodeEditor";
 
 export default function StudentExamTakePage() {
   const { examId } = useParams();
@@ -14,7 +15,16 @@ export default function StudentExamTakePage() {
   const [showSwitchWarning, setShowSwitchWarning] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [remainingSecs, setRemainingSecs] = useState(null);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showFsPrompt, setShowFsPrompt] = useState(false);
+
   const timerRef = useRef(null);
+  const autoSaveTimerRef = useRef(null);
+  const switchEventsRef = useRef([]);
+
+  const storageKey = `exam_draft_${examId}`;
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["student-exam-take", examId],
@@ -25,9 +35,6 @@ export default function StudentExamTakePage() {
   // Start exam mutation
   const startMut = useMutation({
     mutationFn: () => startExam(examId),
-    onSuccess: (res) => {
-      // initialized
-    },
     onError: (err) => {
       showToast(err.response?.data?.error || "ไม่สามารถเริ่มสอบได้", "error");
     },
@@ -37,6 +44,7 @@ export default function StudentExamTakePage() {
   const submitMut = useMutation({
     mutationFn: (payload) => submitExam(examId, payload),
     onSuccess: () => {
+      localStorage.removeItem(storageKey);
       showToast("ส่งข้อสอบเรียบร้อยแล้ว", "success");
       navigate(`/student/exams/${examId}/result`, { replace: true });
     },
@@ -52,9 +60,20 @@ export default function StudentExamTakePage() {
         startMut.mutate();
       } else if (data.submission.status !== "in_progress") {
         navigate(`/student/exams/${examId}/result`, { replace: true });
+        return;
       }
 
-      // Initialize default answers with starter_code for coding questions
+      // Restore switch count if exists
+      if (data.submission?.tab_switch_count) {
+        setTabSwitchCount(data.submission.tab_switch_count);
+      }
+
+      // Check Fullscreen requirement
+      if (data.exam.require_fullscreen && !document.fullscreenElement) {
+        setShowFsPrompt(true);
+      }
+
+      // Initialize default answers
       const initial = {};
       data.questions.forEach((q) => {
         if (q.question_type === "coding" && q.starter_code) {
@@ -63,6 +82,23 @@ export default function StudentExamTakePage() {
           initial[q.id] = "";
         }
       });
+
+      // Overlay server existing answers
+      if (data.existingAnswers) {
+        Object.assign(initial, data.existingAnswers);
+      }
+
+      // Overlay localStorage draft if exists
+      try {
+        const local = localStorage.getItem(storageKey);
+        if (local) {
+          const parsed = JSON.parse(local);
+          Object.assign(initial, parsed);
+        }
+      } catch {
+        // ignore
+      }
+
       setAnswers((prev) => ({ ...initial, ...prev }));
 
       if (data.remainingSeconds != null) {
@@ -91,9 +127,54 @@ export default function StudentExamTakePage() {
     return () => clearInterval(timerRef.current);
   }, [remainingSecs]);
 
-  // Tab-switch and window blur listener (Anti-Cheat)
+  // Periodic Auto-Save (Every 20 seconds)
+  useEffect(() => {
+    if (!data?.exam || data?.submission?.status !== "in_progress") return;
+
+    autoSaveTimerRef.current = setInterval(() => {
+      runAutoSave();
+    }, 20000);
+
+    return () => clearInterval(autoSaveTimerRef.current);
+  }, [data, answers, tabSwitchCount]);
+
+  // Save to localStorage whenever answers change
+  useEffect(() => {
+    if (Object.keys(answers).length > 0) {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(answers));
+      } catch {
+        // ignore
+      }
+    }
+  }, [answers]);
+
+  const runAutoSave = async () => {
+    if (submitMut.isPending || Object.keys(answers).length === 0) return;
+    try {
+      setIsSaving(true);
+      const formatted = Object.entries(answers).map(([qId, ans]) => ({
+        question_id: parseInt(qId),
+        answer: ans,
+      }));
+      await autosaveExam(examId, {
+        answers: formatted,
+        tab_switch_count: tabSwitchCount,
+        switch_events: switchEventsRef.current,
+      });
+      setLastSavedAt(new Date().toLocaleTimeString("th-TH"));
+    } catch (err) {
+      console.warn("Auto-save warning:", err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Anti-Cheat: Tab-switch & Window blur listener
   useEffect(() => {
     const handleBlur = () => {
+      const ev = { time: new Date().toISOString(), type: "blur" };
+      switchEventsRef.current.push(ev);
       setTabSwitchCount((c) => {
         const next = c + 1;
         setShowSwitchWarning(true);
@@ -102,14 +183,44 @@ export default function StudentExamTakePage() {
     };
 
     window.addEventListener("blur", handleBlur);
-    document.addEventListener("visibilitychange", () => {
+    const handleVisChange = () => {
       if (document.hidden) handleBlur();
-    });
+    };
+    document.addEventListener("visibilitychange", handleVisChange);
 
     return () => {
       window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("visibilitychange", handleVisChange);
     };
   }, []);
+
+  // Anti-Cheat: Fullscreen Change Listener
+  useEffect(() => {
+    const handleFsChange = () => {
+      const inFs = !!document.fullscreenElement;
+      setIsFullscreen(inFs);
+      if (!inFs && data?.exam?.require_fullscreen) {
+        const ev = { time: new Date().toISOString(), type: "fullscreen_exit" };
+        switchEventsRef.current.push(ev);
+        setTabSwitchCount((c) => c + 1);
+        setShowSwitchWarning(true);
+      }
+    };
+
+    document.addEventListener("fullscreenchange", handleFsChange);
+    return () => document.removeEventListener("fullscreenchange", handleFsChange);
+  }, [data]);
+
+  const enterFullscreen = () => {
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().then(() => {
+        setIsFullscreen(true);
+        setShowFsPrompt(false);
+      }).catch((err) => {
+        showToast("เบราว์เซอร์ไม่อนุญาตให้เปิดโหมดเต็มจออัตโนมัติ: " + err.message, "error");
+      });
+    }
+  };
 
   const handleAutoSubmit = () => {
     showToast("หมดเวลาสอบแล้ว ระบบกำลังส่งข้อสอบอัตโนมัติ...", "info");
@@ -120,29 +231,17 @@ export default function StudentExamTakePage() {
     setAnswers((prev) => ({ ...prev, [qId]: val }));
   };
 
-  // Support Tab key in code editor textarea
-  const handleCodeKeyDown = (e, qId) => {
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const target = e.target;
-      const start = target.selectionStart;
-      const end = target.selectionEnd;
-      const val = target.value;
-      const nextVal = val.substring(0, start) + "    " + val.substring(end);
-      handleAnswerChange(qId, nextVal);
-      setTimeout(() => {
-        target.selectionStart = target.selectionEnd = start + 4;
-      }, 0);
-    }
-  };
-
   const doSubmit = () => {
     if (submitMut.isPending) return;
     const formatted = Object.entries(answers).map(([qId, ans]) => ({
       question_id: parseInt(qId),
       answer: ans,
     }));
-    submitMut.mutate({ answers: formatted, tab_switch_count: tabSwitchCount });
+    submitMut.mutate({
+      answers: formatted,
+      tab_switch_count: tabSwitchCount,
+      switch_events: switchEventsRef.current,
+    });
   };
 
   const formatTime = (secs) => {
@@ -177,6 +276,29 @@ export default function StudentExamTakePage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-24">
+      {/* Fullscreen Prompt Modal */}
+      {showFsPrompt && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 text-center space-y-4 shadow-2xl">
+            <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-3xl mx-auto">
+              🖥️
+            </div>
+            <h3 className="text-lg font-bold text-gray-900">
+              ข้อสอบนี้กำหนดให้ทำในโหมดเต็มจอ
+            </h3>
+            <p className="text-sm text-gray-600">
+              เพื่อความโปร่งใส ระบบจะตรวจสอบว่าคุณอยู่ในโหมดเต็มจอตลอดเวลาการสอบ หากออกจากโหมดเต็มจอจะถูกบันทึกเป็นการสลับหน้าต่าง
+            </p>
+            <button
+              onClick={enterFullscreen}
+              className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md"
+            >
+              เข้าสู่โหมดเต็มจอและเริ่มทำข้อสอบ
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Sticky Top Timer Bar */}
       <div className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-gray-200 shadow-sm py-3 px-4 -mx-4 sm:-mx-6 sm:px-6 flex items-center justify-between">
         <div>
@@ -187,6 +309,19 @@ export default function StudentExamTakePage() {
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Auto-save Status Badge */}
+          <div className="hidden sm:block text-right">
+            {isSaving ? (
+              <span className="text-xs text-indigo-500 animate-pulse font-medium">
+                💾 กำลังบันทึกร่าง...
+              </span>
+            ) : lastSavedAt ? (
+              <span className="text-xs text-emerald-600 font-medium">
+                ✓ บันทึกร่างแล้ว ({lastSavedAt})
+              </span>
+            ) : null}
+          </div>
+
           <div className="text-right">
             <span className="text-[11px] text-gray-400 block">เวลาที่เหลือ</span>
             <span
@@ -223,23 +358,43 @@ export default function StudentExamTakePage() {
           </div>
           <button
             onClick={() => setShowSwitchWarning(false)}
-            className="text-amber-600 hover:text-amber-900 font-bold px-2 py-0.5"
+            className="text-amber-600 hover:text-amber-800 font-bold px-2 py-1"
           >
             ✕
           </button>
         </div>
       )}
 
-      {/* Progress Info Card */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between text-xs text-gray-500 shadow-sm">
-        <span>
-          ตอบแล้ว <strong className="text-indigo-600">{answeredCount}</strong> จาก{" "}
-          <strong>{questions?.length || 0}</strong> ข้อ
-        </span>
-        <span>เวลารวม {exam?.duration_minutes} นาที</span>
+      {/* Progress & Info Card */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-gray-500">
+        <div>
+          <span>ตอบแล้ว </span>
+          <span className="font-bold text-indigo-600 text-sm">{answeredCount}</span>
+          <span> จากทั้งหมด {questions?.length} ข้อ</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {exam?.allow_paste === 0 && (
+            <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded font-medium">
+              🚫 ไม่อนุญาตให้คัดลอก/วางโค้ด
+            </span>
+          )}
+          {exam?.require_fullscreen === 1 && (
+            <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded font-medium">
+              🖥️ โหมดเต็มจอ
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={runAutoSave}
+            disabled={isSaving}
+            className="text-indigo-600 hover:underline font-medium"
+          >
+            {isSaving ? "กำลังบันทึก..." : "💾 กดบันทึกร่างทันที"}
+          </button>
+        </div>
       </div>
 
-      {/* Questions List (Google Form Style) */}
+      {/* Questions List */}
       <div className="space-y-6">
         {questions?.map((q, idx) => {
           const isMcq = q.question_type === "mcq";
@@ -250,18 +405,19 @@ export default function StudentExamTakePage() {
           return (
             <div
               key={q.id}
-              className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4 hover:border-gray-300 transition-colors"
+              className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4 shadow-sm hover:border-gray-300 transition-colors"
             >
+              {/* Question Header */}
               <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <span className="w-8 h-8 rounded-full bg-indigo-600 text-white font-bold text-sm flex items-center justify-center shadow-sm">
+                  <span className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-700 font-bold text-xs flex items-center justify-center">
                     {idx + 1}
                   </span>
-                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-700 uppercase">
-                    {isCoding ? "Java Programming" : isMcq ? "ช้อยส์ / ปรนัย" : "ข้อเขียน"}
+                  <span className="text-xs text-gray-400">
+                    {isMcq ? "ปรนัย (เลือกตอบ)" : isCoding ? "เขียนโค้ด Java" : "อัตนัย (ตอบสั้น)"}
                   </span>
                 </div>
-                <span className="text-xs font-bold text-gray-500 bg-gray-50 px-2.5 py-1 rounded-md border border-gray-200">
+                <span className="text-xs bg-gray-100 text-gray-600 font-medium px-2.5 py-1 rounded-full">
                   {q.points} คะแนน
                 </span>
               </div>
@@ -307,7 +463,9 @@ export default function StudentExamTakePage() {
               {isCoding && (
                 <div className="space-y-2 pt-2">
                   <div className="flex items-center justify-between text-xs text-gray-500">
-                    <span className="font-mono text-indigo-600">☕ Java Code Editor</span>
+                    <span className="font-mono text-indigo-600 font-semibold">
+                      ☕ Java Code Editor (มีเลขบรรทัด &amp; ย่อหน้าอัตโนมัติ)
+                    </span>
                     {q.starter_code && (
                       <button
                         type="button"
@@ -319,20 +477,13 @@ export default function StudentExamTakePage() {
                     )}
                   </div>
 
-                  <div className="relative rounded-xl overflow-hidden border border-slate-700 bg-slate-900 shadow-inner">
-                    <textarea
-                      rows={12}
-                      value={currentVal}
-                      onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                      onKeyDown={(e) => handleCodeKeyDown(e, q.id)}
-                      placeholder="// เขียนโค้ด Java ที่นี่... (กด Tab เพื่อย่อหน้าได้)"
-                      className="w-full bg-slate-900 text-slate-100 font-mono text-xs p-4 focus:outline-none resize-y leading-relaxed"
-                      spellCheck="false"
-                    />
-                  </div>
-                  <p className="text-[11px] text-gray-400">
-                    💡 ทิป: สามารถกดปุ่ม <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-700 border">Tab</kbd> เพื่อย่อหน้าโค้ดได้ 4 ช่องว่าง
-                  </p>
+                  <CodeEditor
+                    value={currentVal}
+                    onChange={(val) => handleAnswerChange(q.id, val)}
+                    allowPaste={exam?.allow_paste !== 0}
+                    placeholder="// เขียนโค้ด Java ที่นี่... (กด Tab เพื่อย่อหน้าได้)"
+                    minHeight="260px"
+                  />
                 </div>
               )}
 
@@ -361,49 +512,62 @@ export default function StudentExamTakePage() {
             เมื่อกดส่งข้อสอบแล้ว จะไม่สามารถกลับมาแก้ไขคำตอบได้อีก
           </p>
         </div>
-        <button
-          onClick={() => setShowConfirmModal(true)}
-          className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 text-white font-semibold text-sm rounded-xl hover:bg-indigo-700 shadow-sm transition-colors"
-        >
-          ส่งข้อสอบ ({answeredCount}/{questions?.length || 0})
-        </button>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={runAutoSave}
+            disabled={isSaving}
+            className="flex-1 sm:flex-none px-4 py-2.5 border border-gray-300 text-gray-700 text-sm font-medium rounded-xl hover:bg-gray-50"
+          >
+            {isSaving ? "กำลังบันทึก..." : "💾 บันทึกร่าง"}
+          </button>
+          <button
+            onClick={() => setShowConfirmModal(true)}
+            className="flex-1 sm:flex-none px-6 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 shadow-md transition-colors"
+          >
+            ส่งข้อสอบทันที
+          </button>
+        </div>
       </div>
 
-      {/* Confirmation Modal */}
+      {/* Confirm Submission Modal */}
       {showConfirmModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="font-bold text-lg text-gray-900">ยืนยันการส่งข้อสอบ?</h3>
-            <p className="text-sm text-gray-600">
-              คุณได้ตอบข้อสอบไปแล้ว <strong>{answeredCount}</strong> จาก{" "}
-              <strong>{questions?.length || 0}</strong> ข้อ
-            </p>
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-gray-900">ยืนยันการส่งข้อสอบ?</h3>
+            <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-600 space-y-1">
+              <p>
+                • ตอบแล้ว: <span className="font-bold text-gray-900">{answeredCount}</span> จาก{" "}
+                {questions?.length} ข้อ
+              </p>
+              {answeredCount < (questions?.length || 0) && (
+                <p className="text-rose-600 font-semibold">
+                  ⚠️ ยังมีข้อที่ยังไม่ได้ตอบอีก {(questions?.length || 0) - answeredCount} ข้อ
+                </p>
+              )}
+              {tabSwitchCount > 0 && (
+                <p className="text-amber-700">
+                  • จำนวนการสลับหน้าต่าง: <span className="font-bold">{tabSwitchCount} ครั้ง</span>
+                </p>
+              )}
+            </div>
 
-            {answeredCount < (questions?.length || 0) && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-                ⚠️ คุณยังมีข้อที่ยังไม่ได้ตอบอีก{" "}
-                <strong>{(questions?.length || 0) - answeredCount} ข้อ</strong> แน่ใจหรือไม่ว่าจะส่งข้อสอบตอนนี้?
-              </div>
-            )}
-
-            <div className="flex items-center justify-end gap-3 pt-2">
+            <div className="flex gap-2 pt-2">
               <button
-                type="button"
                 onClick={() => setShowConfirmModal(false)}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                className="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50"
               >
                 กลับไปทำต่อ
               </button>
               <button
-                type="button"
                 onClick={() => {
                   setShowConfirmModal(false);
                   doSubmit();
                 }}
                 disabled={submitMut.isPending}
-                className="px-5 py-2 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 shadow-md"
               >
-                {submitMut.isPending ? "กำลังส่งข้อสอบ..." : "ยืนยันส่งข้อสอบ"}
+                {submitMut.isPending ? "กำลังส่ง..." : "ยืนยันส่ง"}
               </button>
             </div>
           </div>
@@ -412,4 +576,3 @@ export default function StudentExamTakePage() {
     </div>
   );
 }
-

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { getCourse, getCourseAssignments } from "../../api/courses";
+import { getCourse, getCourseAssignments, getCourseAnnouncements } from "../../api/courses";
 import { getCourseExams } from "../../api/exams";
 
 const statusLabel = {
@@ -42,6 +42,12 @@ export default function StudentCourseDetailPage() {
     retry: false,
   });
 
+  const { data: annData } = useQuery({
+    queryKey: ["announcements", courseId],
+    queryFn: () => getCourseAnnouncements(courseId),
+    retry: false,
+  });
+
   useEffect(() => {
     if (courseError) navigate("/student/courses", { replace: true });
   }, [courseError]);
@@ -71,6 +77,10 @@ export default function StudentCourseDetailPage() {
         {[
           ["assignments", "งาน (Assignments)"],
           ["exams", "ห้องสอบ (Exams)"],
+          [
+            "announcements",
+            `📢 ประกาศ${annData?.announcements?.length ? ` (${annData.announcements.length})` : ""}`,
+          ],
         ].map(([key, label]) => (
           <button
             key={key}
@@ -284,6 +294,36 @@ export default function StudentCourseDetailPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* ANNOUNCEMENTS TAB */}
+      {activeTab === "announcements" && (
+        <div className="space-y-4">
+          {!annData?.announcements || annData.announcements.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400">
+              <span className="text-4xl block mb-2">📢</span>
+              <p className="font-medium text-gray-600">ยังไม่มีประกาศในวิชานี้</p>
+            </div>
+          ) : (
+            annData.announcements.map((ann) => (
+              <div
+                key={ann.id}
+                className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-3"
+              >
+                <div>
+                  <h3 className="font-bold text-gray-900 text-base">{ann.title}</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    โดย {ann.teacher_name} •{" "}
+                    {new Date(ann.created_at).toLocaleString("th-TH")}
+                  </p>
+                </div>
+                <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                  {ann.content}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       )}
     </div>
   );

@@ -133,6 +133,18 @@ const migrations = [
     created_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     UNIQUE(submission_id, question_id)
   )`,
+  `ALTER TABLE exams ADD COLUMN allow_paste INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE exams ADD COLUMN require_fullscreen INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE exam_submissions ADD COLUMN ip_address TEXT`,
+  `ALTER TABLE exam_submissions ADD COLUMN switch_events TEXT`,
+  `CREATE TABLE IF NOT EXISTS announcements (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id  INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    teacher_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      TEXT    NOT NULL,
+    content    TEXT    NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  )`,
 ];
 for (const sql of migrations) {
   try {

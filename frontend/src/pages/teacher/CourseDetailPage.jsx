@@ -18,7 +18,11 @@ import {
   resetStudentPassword,
   updateCourse,
   updateStudentGroup,
+  getCourseAnnouncements,
+  createAnnouncement,
+  deleteAnnouncement,
 } from "../../api/courses";
+import { downloadBackup } from "../../api/admin";
 import {
   updateAssignment,
   deleteAssignment,
@@ -107,6 +111,48 @@ export default function CourseDetailPage() {
     enabled: tab === "stats",
   });
 
+  // Announcements state & mutations
+  const [showAnnounceForm, setShowAnnounceForm] = useState(false);
+  const [announceForm, setAnnounceForm] = useState({ title: "", content: "" });
+
+  const { data: annData } = useQuery({
+    queryKey: ["announcements", courseId],
+    queryFn: () => getCourseAnnouncements(courseId),
+    enabled: tab === "announcements",
+  });
+
+  const createAnnMut = useMutation({
+    mutationFn: (data) => createAnnouncement(courseId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["announcements", courseId] });
+      setShowAnnounceForm(false);
+      setAnnounceForm({ title: "", content: "" });
+      showToast("สร้างประกาศเรียบร้อยแล้ว", "success");
+    },
+    onError: (err) => showToast(err.response?.data?.error || "สร้างประกาศไม่สำเร็จ", "error"),
+  });
+
+  const deleteAnnMut = useMutation({
+    mutationFn: (annId) => deleteAnnouncement(courseId, annId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["announcements", courseId] });
+      showToast("ลบประกาศเรียบร้อยแล้ว", "success");
+    },
+    onError: (err) => showToast(err.response?.data?.error || "ลบประกาศไม่สำเร็จ", "error"),
+  });
+
+  const handleBackupDb = async () => {
+    try {
+      showToast("กำลังสร้างไฟล์สำรองฐานข้อมูล...", "info");
+      const blob = await downloadBackup();
+      const dateStr = new Date().toISOString().slice(0, 10);
+      triggerFileDownload(blob, `app_backup_${dateStr}.db`);
+      showToast("ดาวน์โหลดไฟล์สำรองเรียบร้อยแล้ว", "success");
+    } catch (err) {
+      showToast(err.response?.data?.error || "สำรองฐานข้อมูลไม่สำเร็จ", "error");
+    }
+  };
+
   // Exam state & mutations
   const [showExamModal, setShowExamModal] = useState(false);
   const [editExam, setEditExam] = useState(null);
@@ -115,6 +161,8 @@ export default function CourseDetailPage() {
     description: "",
     duration_minutes: 60,
     is_open: true,
+    allow_paste: true,
+    require_fullscreen: false,
     questions: [
       {
         question_type: "mcq",
@@ -187,6 +235,8 @@ export default function CourseDetailPage() {
       description: "",
       duration_minutes: 60,
       is_open: true,
+      allow_paste: true,
+      require_fullscreen: false,
       questions: [
         {
           question_type: "mcq",
@@ -209,6 +259,8 @@ export default function CourseDetailPage() {
       description: exam.description || "",
       duration_minutes: exam.duration_minutes || 60,
       is_open: !!exam.is_open,
+      allow_paste: exam.allow_paste !== 0,
+      require_fullscreen: !!exam.require_fullscreen,
       questions: [],
     });
     setShowExamModal(true);
@@ -665,19 +717,30 @@ export default function CourseDetailPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <Link
-          to="/teacher/courses"
-          className="text-sm text-indigo-500 hover:underline"
-        >
-          ← วิชาของฉัน
-        </Link>
-        <h1 className="text-2xl font-bold text-gray-800 mt-1">
-          {course?.name}
-        </h1>
-        {course?.description && (
-          <p className="text-gray-500 text-sm mt-1">{course.description}</p>
-        )}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <Link
+            to="/teacher/courses"
+            className="text-sm text-indigo-500 hover:underline"
+          >
+            ← วิชาของฉัน
+          </Link>
+          <h1 className="text-2xl font-bold text-gray-800 mt-1">
+            {course?.name}
+          </h1>
+          {course?.description && (
+            <p className="text-gray-500 text-sm mt-1">{course.description}</p>
+          )}
+        </div>
+        <div>
+          <button
+            type="button"
+            onClick={handleBackupDb}
+            className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 transition-colors flex items-center gap-1.5 shadow-sm"
+          >
+            💾 สำรองฐานข้อมูล (Backup DB)
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -685,6 +748,7 @@ export default function CourseDetailPage() {
         {[
           ["assignments", "งาน"],
           ["exams", "ห้องสอบ (Exams)"],
+          ["announcements", "📢 ประกาศ"],
           ["rubrics", "Rubric Templates"],
           ["students", "นิสิต"],
           ["stats", "สถิติ"],
@@ -1203,6 +1267,35 @@ export default function CourseDetailPage() {
                 />
               </div>
 
+              {/* Anti-Cheat Settings */}
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 space-y-2.5">
+                <p className="text-xs font-bold text-gray-700">การตั้งค่าความปลอดภัย (Anti-Cheat Settings)</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!examForm.allow_paste}
+                      onChange={(e) =>
+                        setExamForm((prev) => ({ ...prev, allow_paste: !e.target.checked }))
+                      }
+                      className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                    />
+                    <span className="text-gray-700 font-medium">🚫 ไม่อนุญาตให้คัดลอก/วางโค้ด (Block Copy/Paste)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!examForm.require_fullscreen}
+                      onChange={(e) =>
+                        setExamForm((prev) => ({ ...prev, require_fullscreen: e.target.checked }))
+                      }
+                      className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                    />
+                    <span className="text-gray-700 font-medium">🖥️ บังคับทำในโหมดเต็มจอ (Require Fullscreen)</span>
+                  </label>
+                </div>
+              </div>
+
               {/* Questions Builder */}
               {!editExam && (
                 <div className="space-y-4 pt-4 border-t border-gray-200">
@@ -1415,6 +1508,133 @@ export default function CourseDetailPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===== ANNOUNCEMENTS TAB ===== */}
+      {tab === "announcements" && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h2 className="text-lg font-bold text-gray-800">ประกาศประจำรายวิชา</h2>
+              <p className="text-xs text-gray-500">
+                แจ้งข่าวสาร กำหนดการสอบ หรือข้อมูลสำคัญให้นิสิตในวิชาทราบ
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAnnounceForm(true)}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+            >
+              + สร้างประกาศใหม่
+            </button>
+          </div>
+
+          {/* Announcement creation form modal */}
+          {showAnnounceForm && (
+            <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-xl">
+                <h3 className="text-base font-bold text-gray-900">สร้างประกาศใหม่</h3>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    createAnnMut.mutate(announceForm);
+                  }}
+                  className="space-y-4"
+                >
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      หัวข้อประกาศ *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={announceForm.title}
+                      onChange={(e) =>
+                        setAnnounceForm((prev) => ({ ...prev, title: e.target.value }))
+                      }
+                      placeholder="เช่น กำหนดการสอบกลางภาควิชา Java OOP"
+                      className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      เนื้อหาประกาศ *
+                    </label>
+                    <textarea
+                      rows={5}
+                      required
+                      value={announceForm.content}
+                      onChange={(e) =>
+                        setAnnounceForm((prev) => ({ ...prev, content: e.target.value }))
+                      }
+                      placeholder="พิมพ์รายละเอียดประกาศ เช่น วันและเวลาสอบ ลิงก์ห้องสอบ กฎระเบียบ..."
+                      className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAnnounceForm(false)}
+                      className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={createAnnMut.isPending}
+                      className="px-5 py-2 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {createAnnMut.isPending ? "กำลังบันทึก..." : "โพสต์ประกาศ"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Announcements List */}
+          <div className="space-y-3">
+            {!annData?.announcements || annData.announcements.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-400">
+                <span className="text-4xl block mb-2">📢</span>
+                <p className="font-medium text-gray-600">ยังไม่มีประกาศในวิชานี้</p>
+                <p className="text-xs text-gray-400 mt-1">กดปุ่ม "+ สร้างประกาศใหม่" ด้านบนเพื่อเริ่มแจ้งข่าวสารแก่นิสิต</p>
+              </div>
+            ) : (
+              annData.announcements.map((ann) => (
+                <div
+                  key={ann.id}
+                  className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-3 hover:border-gray-300 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-bold text-gray-900 text-base">{ann.title}</h3>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        โดย {ann.teacher_name} •{" "}
+                        {new Date(ann.created_at).toLocaleString("th-TH")}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm("ต้องการลบประกาศนี้ใช่หรือไม่?")) {
+                          deleteAnnMut.mutate(ann.id);
+                        }
+                      }}
+                      className="text-xs text-rose-500 hover:text-rose-700 p-1 hover:bg-rose-50 rounded"
+                    >
+                      ลบประกาศ
+                    </button>
+                  </div>
+                  <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                    {ann.content}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

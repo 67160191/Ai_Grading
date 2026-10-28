@@ -9,7 +9,10 @@ import {
   publishExam,
   aiGradeJava,
   exportExamResults,
+  batchAiGrade,
+  getExamSimilarity,
 } from "../../api/exams";
+import CodeEditor from "../../components/CodeEditor";
 
 export default function ExamGradingPage() {
   const { examId } = useParams();
@@ -17,6 +20,10 @@ export default function ExamGradingPage() {
   const { showToast } = useToast();
 
   const [selectedSubId, setSelectedSubId] = useState(null);
+  const [showSimilarityModal, setShowSimilarityModal] = useState(false);
+  const [selectedPair, setSelectedPair] = useState(null);
+  const [isBatchGrading, setIsBatchGrading] = useState(false);
+
   const [gradeForm, setGradeForm] = useState({
     answers: [],
     overall_feedback: "",
@@ -34,6 +41,12 @@ export default function ExamGradingPage() {
     enabled: !!selectedSubId,
   });
 
+  const { data: similarityData, isLoading: similarityLoading, refetch: refetchSimilarity } = useQuery({
+    queryKey: ["exam-similarity", examId],
+    queryFn: () => getExamSimilarity(examId),
+    enabled: showSimilarityModal,
+  });
+
   const gradeMut = useMutation({
     mutationFn: (payload) => gradeExamSubmission(selectedSubId, payload),
     onSuccess: () => {
@@ -44,6 +57,20 @@ export default function ExamGradingPage() {
     },
     onError: (err) => {
       showToast(err.response?.data?.error || "เกิดข้อผิดพลาดในการบันทึก", "error");
+    },
+  });
+
+  const batchMut = useMutation({
+    mutationFn: () => batchAiGrade(examId),
+    onMutate: () => setIsBatchGrading(true),
+    onSuccess: (res) => {
+      setIsBatchGrading(false);
+      showToast(res.message, "success");
+      qc.invalidateQueries({ queryKey: ["exam-submissions", examId] });
+    },
+    onError: (err) => {
+      setIsBatchGrading(false);
+      showToast(err.response?.data?.error || "เกิดข้อผิดพลาดในการตรวจอัตโนมัติ", "error");
     },
   });
 
@@ -62,7 +89,6 @@ export default function ExamGradingPage() {
     setSelectedSubId(subId);
   };
 
-  // Sync subDetailData into local gradeForm when modal opens
   const syncGradeForm = () => {
     if (!subDetailData) return;
     const initialAnswers = subDetailData.questions.map((q) => ({
@@ -126,8 +152,39 @@ export default function ExamGradingPage() {
 
   const { exam, course, students, stats } = data || {};
 
+  // Score distribution statistics
+  const scoredStudents = (students || []).filter((s) => s.score != null);
+  const scoresList = scoredStudents.map((s) => s.score).sort((a, b) => a - b);
+  const minScore = scoresList.length ? scoresList[0] : null;
+  const maxScore = scoresList.length ? scoresList[scoresList.length - 1] : null;
+  const medianScore = scoresList.length
+    ? scoresList.length % 2 === 0
+      ? ((scoresList[scoresList.length / 2 - 1] + scoresList[scoresList.length / 2]) / 2).toFixed(1)
+      : scoresList[Math.floor(scoresList.length / 2)].toFixed(1)
+    : null;
+  const passCount = scoredStudents.filter((s) => s.score >= (s.max_score || 0) * 0.5).length;
+  const passRate = scoredStudents.length ? Math.round((passCount / scoredStudents.length) * 100) : null;
+
+  // 5 bins histogram: 0-20%, 21-40%, 41-60%, 61-80%, 81-100%
+  const bins = [
+    { label: "0-20%", count: 0, color: "bg-rose-400" },
+    { label: "21-40%", count: 0, color: "bg-orange-400" },
+    { label: "41-60%", count: 0, color: "bg-amber-400" },
+    { label: "61-80%", count: 0, color: "bg-sky-400" },
+    { label: "81-100%", count: 0, color: "bg-emerald-500" },
+  ];
+  scoredStudents.forEach((s) => {
+    const pct = s.max_score ? (s.score / s.max_score) * 100 : 0;
+    if (pct <= 20) bins[0].count++;
+    else if (pct <= 40) bins[1].count++;
+    else if (pct <= 60) bins[2].count++;
+    else if (pct <= 80) bins[3].count++;
+    else bins[4].count++;
+  });
+  const maxBinCount = Math.max(...bins.map((b) => b.count), 1);
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6 pb-20">
       {/* Header */}
       <div>
         <Link
@@ -145,6 +202,16 @@ export default function ExamGradingPage() {
               <span className="text-xs text-gray-500">
                 เวลาสอบ {exam?.duration_minutes} นาที
               </span>
+              {exam?.allow_paste === 0 && (
+                <span className="bg-rose-100 text-rose-700 text-[11px] px-2 py-0.5 rounded font-medium">
+                  ห้าม Paste โค้ด
+                </span>
+              )}
+              {exam?.require_fullscreen === 1 && (
+                <span className="bg-purple-100 text-purple-700 text-[11px] px-2 py-0.5 rounded font-medium">
+                  บังคับเต็มจอ
+                </span>
+              )}
             </div>
             <h1 className="text-2xl font-bold text-gray-900 mt-1">{exam?.title}</h1>
             {exam?.description && (
@@ -153,13 +220,44 @@ export default function ExamGradingPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Batch AI Grading Button */}
+            <button
+              onClick={() => {
+                if (confirm("ต้องการให้ AI ช่วยตรวจข้อสอบทั้งหมดของนิสิตที่ส่งแล้วใช่หรือไม่?")) {
+                  batchMut.mutate();
+                }
+              }}
+              disabled={isBatchGrading}
+              className="px-3.5 py-2 rounded-lg text-sm font-semibold bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-700 hover:to-violet-700 transition-all flex items-center gap-1.5 shadow-md disabled:opacity-50"
+            >
+              {isBatchGrading ? (
+                <>
+                  <span className="animate-spin inline-block">⏳</span>
+                  <span>AI กำลังตรวจทั้งห้อง...</span>
+                </>
+              ) : (
+                <>
+                  <span>🤖</span>
+                  <span>ตรวจด้วย AI ทั้งห้อง</span>
+                </>
+              )}
+            </button>
+
+            {/* Plagiarism Similarity Button */}
+            <button
+              onClick={() => {
+                setShowSimilarityModal(true);
+                refetchSimilarity();
+              }}
+              className="px-3 py-2 rounded-lg text-sm font-medium border border-purple-300 text-purple-700 bg-white hover:bg-purple-50 transition-colors flex items-center gap-1.5 shadow-sm"
+            >
+              🔍 ตรวจการลอกโค้ด
+            </button>
+
+            {/* Export Buttons */}
             <button
               onClick={() =>
-                exportExamResults(
-                  examId,
-                  `${exam?.title}_results.xls`,
-                  "xls",
-                )
+                exportExamResults(examId, `${exam?.title}_results.xls`, "xls")
               }
               className="px-3 py-2 rounded-lg text-sm font-medium border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-50 transition-colors flex items-center gap-1.5 shadow-sm"
             >
@@ -167,16 +265,14 @@ export default function ExamGradingPage() {
             </button>
             <button
               onClick={() =>
-                exportExamResults(
-                  examId,
-                  `${exam?.title}_results.csv`,
-                  "csv",
-                )
+                exportExamResults(examId, `${exam?.title}_results.csv`, "csv")
               }
               className="px-3 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 transition-colors flex items-center gap-1.5 shadow-sm"
             >
               📄 Export CSV
             </button>
+
+            {/* Publish Scores */}
             <button
               onClick={() => publishMut.mutate(!exam?.is_published)}
               disabled={publishMut.isPending}
@@ -186,7 +282,7 @@ export default function ExamGradingPage() {
                   : "bg-gray-200 text-gray-700 hover:bg-gray-300"
               }`}
             >
-              {exam?.is_published ? "✓ ประกาศคะแนนแล้ว (คลิกเพื่อปิด)" : "📢 ประกาศผลคะแนนให้นิสิต"}
+              {exam?.is_published ? "✓ ประกาศคะแนนแล้ว" : "📢 ประกาศผลคะแนน"}
             </button>
           </div>
         </div>
@@ -207,12 +303,52 @@ export default function ExamGradingPage() {
           <p className="text-2xl font-bold text-green-600 mt-1">{stats?.graded_count || 0}</p>
         </div>
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-          <p className="text-xs text-gray-500">คะแนนเฉลี่ย</p>
+          <p className="text-xs text-gray-500">คะแนนเฉลี่ย (Mean)</p>
           <p className="text-2xl font-bold text-amber-600 mt-1">
             {stats?.avg_score != null ? `${stats.avg_score} คะแนน` : "-"}
           </p>
         </div>
       </div>
+
+      {/* Score Analytics & Distribution Section */}
+      {scoredStudents.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-3">
+            <h3 className="font-bold text-sm text-gray-800 flex items-center gap-2">
+              <span>📈</span>
+              <span>สถิติและการกระจายตัวของคะแนน (Score Analytics)</span>
+            </h3>
+            <div className="flex items-center gap-4 text-xs text-gray-500">
+              <span>ต่ำสุด: <strong className="text-rose-600">{minScore ?? "-"}</strong></span>
+              <span>สูงสุด: <strong className="text-emerald-600">{maxScore ?? "-"}</strong></span>
+              <span>มัธยฐาน (Median): <strong className="text-indigo-600">{medianScore ?? "-"}</strong></span>
+              <span>ผ่านเกณฑ์ (≥50%): <strong className="text-green-700">{passRate != null ? `${passRate}% (${passCount} คน)` : "-"}</strong></span>
+            </div>
+          </div>
+
+          {/* Histogram Bars */}
+          <div className="space-y-2 pt-1">
+            <p className="text-xs text-gray-500 font-medium">การกระจายตัวของคะแนน (% จากคะแนนเต็ม):</p>
+            <div className="grid grid-cols-5 gap-3 pt-2">
+              {bins.map((b, idx) => {
+                const heightPct = Math.round((b.count / maxBinCount) * 100);
+                return (
+                  <div key={idx} className="flex flex-col items-center gap-1.5">
+                    <span className="text-xs font-bold text-gray-700">{b.count} คน</span>
+                    <div className="w-full bg-gray-100 h-20 rounded-lg flex items-end p-1">
+                      <div
+                        className={`w-full ${b.color} rounded transition-all duration-500`}
+                        style={{ height: `${Math.max(heightPct, 6)}%` }}
+                      ></div>
+                    </div>
+                    <span className="text-[11px] text-gray-500 font-medium">{b.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Students Submissions Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -228,7 +364,7 @@ export default function ExamGradingPage() {
                 <th className="px-5 py-3">รหัสนิสิต</th>
                 <th className="px-5 py-3">ชื่อ-นามสกุล</th>
                 <th className="px-5 py-3">สถานะ</th>
-                <th className="px-5 py-3">สลับแท็บ / หน้าจอ</th>
+                <th className="px-5 py-3">สลับแท็บ / ความปลอดภัย</th>
                 <th className="px-5 py-3">คะแนน</th>
                 <th className="px-5 py-3 text-right">การจัดการ</th>
               </tr>
@@ -275,13 +411,18 @@ export default function ExamGradingPage() {
                       </td>
                       <td className="px-5 py-3">
                         {hasSub ? (
-                          s.tab_switch_count > 0 ? (
-                            <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-200 text-xs px-2 py-0.5 rounded-md font-medium">
-                              ⚠️ สลับแท็บ {s.tab_switch_count} ครั้ง
-                            </span>
-                          ) : (
-                            <span className="text-xs text-gray-400">ปกติ (0 ครั้ง)</span>
-                          )
+                          <div className="space-y-0.5">
+                            {s.tab_switch_count > 0 ? (
+                              <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-200 text-xs px-2 py-0.5 rounded-md font-medium">
+                                ⚠️ สลับแท็บ {s.tab_switch_count} ครั้ง
+                              </span>
+                            ) : (
+                              <span className="text-xs text-emerald-600 font-medium">✓ ปกติ (0 ครั้ง)</span>
+                            )}
+                            {s.ip_address && (
+                              <p className="text-[10px] text-gray-400 font-mono">IP: {s.ip_address}</p>
+                            )}
+                          </div>
                         ) : (
                           "-"
                         )}
@@ -316,7 +457,7 @@ export default function ExamGradingPage() {
         </div>
       </div>
 
-      {/* Grade Modal */}
+      {/* Grade Individual Student Modal */}
       {selectedSubId && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-4xl w-full my-8 shadow-2xl flex flex-col max-h-[90vh]">
@@ -351,6 +492,22 @@ export default function ExamGradingPage() {
                 }
               }}
             >
+              {/* Anti-cheat banner inside modal */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span>🌐</span>
+                  <span>IP Address: </span>
+                  <strong className="font-mono">{subDetailData?.submission?.ip_address || "ไม่ระบุ"}</strong>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span>🖥️</span>
+                  <span>สลับหน้าจอ/แท็บ: </span>
+                  <strong className={subDetailData?.submission?.tab_switch_count > 0 ? "text-rose-600" : "text-emerald-600"}>
+                    {subDetailData?.submission?.tab_switch_count || 0} ครั้ง
+                  </strong>
+                </div>
+              </div>
+
               {subDetailLoading ? (
                 <p className="text-center py-10 text-gray-400">กำลังโหลดคำตอบ...</p>
               ) : (
@@ -428,11 +585,11 @@ export default function ExamGradingPage() {
                           </div>
                         ) : isCoding ? (
                           <div className="space-y-2">
-                            <div className="rounded-lg bg-slate-900 p-4 font-mono text-xs text-slate-100 overflow-x-auto border border-slate-700">
-                              <pre className="whitespace-pre">
-                                {q.student_answer || "(ไม่ได้เขียนโค้ด)"}
-                              </pre>
-                            </div>
+                            <CodeEditor
+                              readOnly={true}
+                              value={q.student_answer || "(ไม่ได้เขียนโค้ด)"}
+                              minHeight="200px"
+                            />
 
                             {q.solution_guide && (
                               <details className="text-xs text-gray-500 bg-gray-50 p-2.5 rounded border border-gray-200">
@@ -451,15 +608,17 @@ export default function ExamGradingPage() {
                                 type="button"
                                 onClick={() => handleAiGrade(q.id)}
                                 disabled={loadingAiQId === q.id}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition-colors"
+                                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100 transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
                               >
                                 {loadingAiQId === q.id ? (
                                   <>
-                                    <span className="animate-spin">🌀</span> AI กำลังวิเคราะห์โค้ด Java...
+                                    <span className="animate-spin inline-block">⏳</span>
+                                    <span>AI กำลังตรวจ...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <span>🤖</span> ให้ AI ตรวจ Java เบื้องต้น
+                                    <span>🤖</span>
+                                    <span>ให้ AI ช่วยตรวจ Java</span>
                                   </>
                                 )}
                               </button>
@@ -467,39 +626,40 @@ export default function ExamGradingPage() {
                           </div>
                         ) : (
                           <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 text-xs text-gray-800 whitespace-pre-wrap">
-                            {q.student_answer || "(ไม่มีคำตอบ)"}
+                            {q.student_answer || "(ไม่ได้ระบุ)"}
                           </div>
                         )}
                       </div>
 
-                      {/* Teacher Grading Inputs for this question */}
+                      {/* Score Input & Feedback */}
                       <div className="pt-3 border-t border-gray-100 grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
                         <div>
                           <label className="block text-xs font-semibold text-gray-700 mb-1">
-                            คะแนนที่ให้ (เต็ม {q.points}):
+                            คะแนนที่ได้ (เต็ม {q.points}):
                           </label>
                           <input
                             type="number"
                             step="0.5"
                             min="0"
                             max={q.points}
-                            value={currentAnsState?.manual_score ?? ""}
-                            onChange={(e) => handleScoreChange(q.id, e.target.value)}
-                            className="w-full text-sm font-semibold border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                            placeholder="0"
+                            value={currentAnsState?.manual_score ?? 0}
+                            onChange={(e) =>
+                              handleScoreChange(q.id, parseFloat(e.target.value) || 0)
+                            }
+                            className="w-full text-sm font-bold border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                           />
                         </div>
 
                         <div className="md:col-span-3">
                           <label className="block text-xs font-semibold text-gray-700 mb-1">
-                            Feedback / ข้อเสนอแนะในข้อนี้:
+                            ข้อเสนอแนะรายข้อ (Feedback):
                           </label>
                           <textarea
                             rows={2}
-                            value={currentAnsState?.feedback || ""}
+                            value={currentAnsState?.feedback ?? ""}
                             onChange={(e) => handleFeedbackChange(q.id, e.target.value)}
                             className="w-full text-xs border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                            placeholder="เน้นตรวจความถูกต้องของ Logic / การทำงานของโค้ด ไม่หักคะแนนเรื่องรูปแบบหรือความสวยงาม"
+                            placeholder="เน้นตรวจความถูกต้องของ Logic ไม่หักคะแนนเรื่องรูปแบบหรือความสวยงาม"
                           />
                         </div>
                       </div>
@@ -520,7 +680,7 @@ export default function ExamGradingPage() {
                     setGradeForm((prev) => ({ ...prev, overall_feedback: e.target.value }))
                   }
                   className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
-                  placeholder="เขียนสรุปภาพรวมการทำข้อสอบของนิสิตคนนี้ เช่น ทำได้ดีมาก หรือควรทบทวนเรื่อง Array และ OOP..."
+                  placeholder="เขียนสรุปภาพรวมการทำข้อสอบของนิสิตคนนี้ เช่น ทำได้ดีมาก หรือควรทบทวนเรื่อง Array..."
                 />
               </div>
             </div>
@@ -546,7 +706,173 @@ export default function ExamGradingPage() {
           </div>
         </div>
       )}
+
+      {/* Plagiarism Similarity Modal */}
+      {showSimilarityModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-5xl w-full my-8 shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50 rounded-t-2xl">
+              <div>
+                <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                  <span>🔍</span>
+                  <span>รายงานการตรวจจับความคล้ายกันของโค้ด (Code Plagiarism Matrix)</span>
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  ระบบเปรียบเทียบ N-gram Token Similarity ขจัดช่องว่างและการตั้งชื่อตัวแปร เพื่อตรวจจับโค้ดที่คล้ายกัน
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowSimilarityModal(false);
+                  setSelectedPair(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 text-xl font-bold p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
+              {similarityLoading ? (
+                <div className="text-center py-16 text-gray-400">
+                  <span className="animate-spin text-3xl inline-block mb-3">⏳</span>
+                  <p>กำลังคำนวณความคล้ายกันของโค้ดทุกคู่ในห้องสอบ...</p>
+                </div>
+              ) : !similarityData?.pairs || similarityData.pairs.length === 0 ? (
+                <div className="text-center py-16 text-gray-500 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                  <span className="text-4xl mb-2 inline-block">✅</span>
+                  <h4 className="font-bold text-base text-gray-700">ไม่พบคู่โค้ดที่มีความเสี่ยงลอกเลียนแบบ</h4>
+                  <p className="text-xs text-gray-400 mt-1">
+                    โค้ดของนิสิตแต่ละคนมีความแตกต่างกันอย่างชัดเจนตามเกณฑ์มาตรฐาน
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Pair Selector Table */}
+                  <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left text-xs text-gray-600">
+                      <thead className="bg-gray-50 uppercase text-gray-500 border-b border-gray-200">
+                        <tr>
+                          <th className="px-4 py-3">โจทย์ข้อที่</th>
+                          <th className="px-4 py-3">นิสิตคนที่ 1</th>
+                          <th className="px-4 py-3">นิสิตคนที่ 2</th>
+                          <th className="px-4 py-3 text-center">ระดับความคล้ายกัน</th>
+                          <th className="px-4 py-3 text-right">การตรวจสอบ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {similarityData.pairs.map((p, idx) => {
+                          const isHigh = p.similarity >= 80;
+                          const isMed = p.similarity >= 60;
+                          const isSelected = selectedPair === p;
+
+                          return (
+                            <tr
+                              key={idx}
+                              className={`hover:bg-indigo-50/50 cursor-pointer transition-colors ${
+                                isSelected ? "bg-indigo-50 font-medium" : ""
+                              }`}
+                              onClick={() => setSelectedPair(p)}
+                            >
+                              <td className="px-4 py-3 font-semibold text-gray-800">
+                                ข้อ {p.question_order}
+                              </td>
+                              <td className="px-4 py-3">
+                                {p.student1.name} ({p.student1.username})
+                              </td>
+                              <td className="px-4 py-3">
+                                {p.student2.name} ({p.student2.username})
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <span
+                                  className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold ${
+                                    isHigh
+                                      ? "bg-rose-100 text-rose-700 border border-rose-200 animate-pulse"
+                                      : isMed
+                                      ? "bg-amber-100 text-amber-700 border border-amber-200"
+                                      : "bg-sky-100 text-sky-700 border border-sky-200"
+                                  }`}
+                                >
+                                  {p.similarity}% {isHigh ? "🔥 เสี่ยงสูงมาก" : isMed ? "⚠️ ปานกลาง" : "คล้ายบางส่วน"}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedPair(p);
+                                  }}
+                                  className="text-indigo-600 hover:underline font-semibold"
+                                >
+                                  ดูเทียบโค้ด ➔
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Side-by-side Code Comparison */}
+                  {selectedPair && (
+                    <div className="border border-indigo-200 rounded-2xl bg-indigo-50/30 p-5 space-y-4">
+                      <div className="flex items-center justify-between border-b border-indigo-100 pb-3">
+                        <h4 className="font-bold text-sm text-gray-900">
+                          เปรียบเทียบโค้ดข้อ {selectedPair.question_order} (ความเหมือน {selectedPair.similarity}%)
+                        </h4>
+                        <span className="text-xs text-indigo-700">
+                          {selectedPair.question_prompt}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Student 1 */}
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-gray-800">
+                            👤 {selectedPair.student1.name} ({selectedPair.student1.username})
+                          </p>
+                          <CodeEditor
+                            readOnly={true}
+                            value={selectedPair.student1.code}
+                            minHeight="240px"
+                          />
+                        </div>
+
+                        {/* Student 2 */}
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-gray-800">
+                            👤 {selectedPair.student2.name} ({selectedPair.student2.username})
+                          </p>
+                          <CodeEditor
+                            readOnly={true}
+                            value={selectedPair.student2.code}
+                            minHeight="240px"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-gray-100 flex justify-end bg-gray-50 rounded-b-2xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSimilarityModal(false);
+                  setSelectedPair(null);
+                }}
+                className="px-5 py-2 text-sm font-semibold bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+              >
+                ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-

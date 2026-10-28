@@ -112,8 +112,8 @@ router.put('/settings/grading', authenticate, requireRole('admin'), (req, res) =
   res.json({ settings: Object.fromEntries(updated.map(r => [r.key, r.value])) });
 });
 
-// GET /api/admin/backup/db — ดาวน์โหลด SQLite backup (admin only)
-router.get('/backup/db', authenticate, requireRole('admin'), async (req, res) => {
+// GET /api/admin/backup/db — ดาวน์โหลด SQLite backup (admin & teacher)
+router.get('/backup/db', authenticate, requireRole('admin', 'teacher'), async (req, res) => {
   try {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const dest = join(__dirname, `../../data/backup_${date}.db`);

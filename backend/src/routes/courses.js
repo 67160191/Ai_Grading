@@ -2,7 +2,7 @@ import { Router } from "express";
 import { unlink } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import db from "../db/database.js";
+import db, { nowUTC } from "../db/database.js";
 import { authenticate, requireRole } from "../middleware/auth.js";
 import { getRubricWithCriteria, insertLevels } from "./rubrics.js";
 import { randomBytes } from "crypto";
@@ -1265,6 +1265,63 @@ router.get("/my-data", authenticate, requireRole("student"), (req, res) => {
     grades,
     appeals,
   });
+});
+
+// ==========================================
+// COURSE ANNOUNCEMENTS
+// ==========================================
+
+// GET /api/courses/:id/announcements
+router.get("/:id/announcements", authenticate, (req, res) => {
+  const course = db.prepare("SELECT * FROM courses WHERE id = ?").get(req.params.id);
+  if (!course) return res.status(404).json({ error: "ไม่พบรายวิชา" });
+
+  const announcements = db
+    .prepare(
+      `SELECT a.*, u.name AS teacher_name 
+       FROM announcements a 
+       JOIN users u ON u.id = a.teacher_id 
+       WHERE a.course_id = ? 
+       ORDER BY a.created_at DESC`
+    )
+    .all(req.params.id);
+
+  res.json({ announcements });
+});
+
+// POST /api/courses/:id/announcements (teacher only)
+router.post("/:id/announcements", authenticate, requireRole("teacher", "admin"), (req, res) => {
+  const { title, content } = req.body;
+  if (!title?.trim() || !content?.trim()) {
+    return res.status(400).json({ error: "กรุณาระบุหัวข้อและเนื้อหาประกาศ" });
+  }
+
+  const course = db.prepare("SELECT * FROM courses WHERE id = ?").get(req.params.id);
+  if (!course) return res.status(404).json({ error: "ไม่พบรายวิชา" });
+  if (req.user.role === "teacher" && course.teacher_id !== req.user.id) {
+    return res.status(403).json({ error: "คุณไม่มีสิทธิ์สร้างประกาศในวิชานี้" });
+  }
+
+  const result = db
+    .prepare(
+      "INSERT INTO announcements (course_id, teacher_id, title, content, created_at) VALUES (?, ?, ?, ?, ?)"
+    )
+    .run(req.params.id, req.user.id, title.trim(), content.trim(), nowUTC());
+
+  const announcement = db.prepare("SELECT * FROM announcements WHERE id = ?").get(result.lastInsertRowid);
+  res.status(201).json({ announcement });
+});
+
+// DELETE /api/courses/:id/announcements/:announcementId (teacher only)
+router.delete("/:id/announcements/:announcementId", authenticate, requireRole("teacher", "admin"), (req, res) => {
+  const course = db.prepare("SELECT * FROM courses WHERE id = ?").get(req.params.id);
+  if (!course) return res.status(404).json({ error: "ไม่พบรายวิชา" });
+  if (req.user.role === "teacher" && course.teacher_id !== req.user.id) {
+    return res.status(403).json({ error: "คุณไม่มีสิทธิ์ลบประกาศในวิชานี้" });
+  }
+
+  db.prepare("DELETE FROM announcements WHERE id = ? AND course_id = ?").run(req.params.announcementId, req.params.id);
+  res.json({ message: "ลบประกาศเรียบร้อยแล้ว" });
 });
 
 export default router;

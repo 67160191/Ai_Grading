@@ -209,6 +209,16 @@ export default function StudentExamResultPage() {
                       <p className="whitespace-pre-wrap text-amber-800">{q.feedback}</p>
                     </div>
                   )}
+
+                  {/* Solution Guide / Answer Key */}
+                  {q.solution_guide && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 mt-2">
+                      <p className="font-semibold mb-0.5">💡 แนวทางการตอบ / เฉลยตัวอย่าง:</p>
+                      <pre className="whitespace-pre-wrap font-mono text-emerald-800 text-[11px] bg-white/80 p-2.5 rounded-lg border border-emerald-200 mt-1">
+                        {q.solution_guide}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               );
             })}

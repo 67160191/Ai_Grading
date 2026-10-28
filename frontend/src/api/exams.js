@@ -77,3 +77,23 @@ export async function exportExamResults(id, filename, format = "csv") {
   triggerFileDownload(res.data, defaultFilename);
 }
 
+export async function autosaveExam(id, data) {
+  const res = await api.post(`/exams/${id}/autosave`, data);
+  return res.data;
+}
+
+export async function batchAiGrade(id) {
+  const res = await api.post(`/exams/${id}/batch-ai-grade`);
+  return res.data;
+}
+
+export async function getExamSimilarity(id) {
+  const res = await api.get(`/exams/${id}/similarity`);
+  return res.data;
+}
+
+export async function getExamReview(id) {
+  const res = await api.get(`/exams/${id}/review`);
+  return res.data;
+}
+

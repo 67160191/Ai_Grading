@@ -47,3 +47,12 @@ export const exportGrades = (courseId, mode = 'latest', format = 'csv') =>
   api.get(`/courses/${courseId}/grades/export`, { params: { mode, format }, responseType: 'blob' }).then(r => r.data)
 
 export const getTeacherSummary = () => api.get('/teacher/summary').then(r => r.data)
+
+export const getCourseAnnouncements = (courseId) =>
+  api.get(`/courses/${courseId}/announcements`).then((r) => r.data)
+
+export const createAnnouncement = (courseId, data) =>
+  api.post(`/courses/${courseId}/announcements`, data).then((r) => r.data)
+
+export const deleteAnnouncement = (courseId, announcementId) =>
+  api.delete(`/courses/${courseId}/announcements/${announcementId}`).then((r) => r.data)
