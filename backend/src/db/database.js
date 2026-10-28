@@ -145,6 +145,10 @@ const migrations = [
     content    TEXT    NOT NULL,
     created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   )`,
+  `ALTER TABLE exam_questions ADD COLUMN test_cases TEXT`,
+  `ALTER TABLE exam_questions ADD COLUMN test_driver TEXT`,
+  `ALTER TABLE exam_questions ADD COLUMN language TEXT NOT NULL DEFAULT 'java'`,
+  `ALTER TABLE exam_answers ADD COLUMN test_case_results TEXT`,
 ];
 for (const sql of migrations) {
   try {

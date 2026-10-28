@@ -4,6 +4,7 @@ import { authenticate, requireRole } from "../middleware/auth.js";
 import { logActivity } from "../middleware/logger.js";
 import { getGradingSettings } from "../services/grading.js";
 import { formatExportResponse } from "../utils/export.js";
+import { executeCode, runTestCases } from "../services/codeRunner.js";
 
 const router = Router();
 
@@ -103,8 +104,8 @@ router.post(
     `);
 
     const insertQuestion = db.prepare(`
-      INSERT INTO exam_questions (exam_id, question_order, question_type, prompt, points, options, correct_option, starter_code, solution_guide)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO exam_questions (exam_id, question_order, question_type, prompt, points, options, correct_option, starter_code, solution_guide, test_cases, test_driver, language)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const now = nowUTC();
@@ -134,6 +135,12 @@ router.post(
                 ? q.options
                 : JSON.stringify(q.options)
               : null;
+          const testCasesStr =
+            type === "coding" && q.test_cases
+              ? typeof q.test_cases === "string"
+                ? q.test_cases
+                : JSON.stringify(q.test_cases)
+              : null;
 
           insertQuestion.run(
             examId,
@@ -145,6 +152,9 @@ router.post(
             q.correct_option ? String(q.correct_option) : null,
             q.starter_code || null,
             q.solution_guide || null,
+            testCasesStr,
+            q.test_driver || null,
+            q.language || "java",
           );
         });
       }
@@ -192,7 +202,15 @@ router.get("/exams/:id", authenticate, (req, res) => {
             opts = [];
           }
         }
-        return { ...q, options: opts };
+        let tcs = [];
+        if (q.test_cases) {
+          try {
+            tcs = JSON.parse(q.test_cases);
+          } catch {
+            tcs = [];
+          }
+        }
+        return { ...q, options: opts, test_cases: tcs, language: q.language || "java" };
       });
 
     return res.json({ exam, course, questions });
@@ -229,6 +247,29 @@ router.get("/exams/:id", authenticate, (req, res) => {
           opts = [];
         }
       }
+      let tcs = [];
+      if (q.test_cases) {
+        try {
+          tcs = JSON.parse(q.test_cases);
+        } catch {
+          tcs = [];
+        }
+      }
+      // Mask hidden test case input/output for students during exam
+      const studentTestCases = showAnswers
+        ? tcs
+        : tcs.map((tc) =>
+            tc.is_hidden
+              ? {
+                  id: tc.id,
+                  name: tc.name || `Case ${tc.id}`,
+                  is_hidden: true,
+                  input: "(Hidden Test Case)",
+                  expected_output: "(Hidden Test Case)",
+                }
+              : tc,
+          );
+
       return {
         id: q.id,
         exam_id: q.exam_id,
@@ -238,6 +279,8 @@ router.get("/exams/:id", authenticate, (req, res) => {
         points: q.points,
         options: opts,
         starter_code: q.starter_code,
+        language: q.language || "java",
+        test_cases: studentTestCases,
         correct_option: showAnswers ? q.correct_option : undefined,
         solution_guide: showAnswers ? q.solution_guide : undefined,
       };
@@ -320,8 +363,8 @@ router.put("/exams/:id", authenticate, requireRole("teacher", "admin"), (req, re
         // Safe to replace questions
         db.prepare("DELETE FROM exam_questions WHERE exam_id = ?").run(id);
         const insertQ = db.prepare(`
-          INSERT INTO exam_questions (exam_id, question_order, question_type, prompt, points, options, correct_option, starter_code, solution_guide)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO exam_questions (exam_id, question_order, question_type, prompt, points, options, correct_option, starter_code, solution_guide, test_cases, test_driver, language)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         questions.forEach((q, idx) => {
           const type = ["mcq", "coding", "short_answer"].includes(q.question_type)
@@ -334,6 +377,13 @@ router.put("/exams/:id", authenticate, requireRole("teacher", "admin"), (req, re
                 ? q.options
                 : JSON.stringify(q.options)
               : null;
+          const testCasesStr =
+            type === "coding" && q.test_cases
+              ? typeof q.test_cases === "string"
+                ? q.test_cases
+                : JSON.stringify(q.test_cases)
+              : null;
+
           insertQ.run(
             id,
             idx + 1,
@@ -344,6 +394,9 @@ router.put("/exams/:id", authenticate, requireRole("teacher", "admin"), (req, re
             q.correct_option ? String(q.correct_option) : null,
             q.starter_code || null,
             q.solution_guide || null,
+            testCasesStr,
+            q.test_driver || null,
+            q.language || "java",
           );
         });
       }
@@ -1143,6 +1196,224 @@ router.post(
     res.json({
       message: `ตรวจข้อสอบด้วย AI สำเร็จทั้งหมด ${gradedCount} คน`,
       gradedCount,
+    });
+  },
+);
+
+// POST /api/exams/run-code - Interactive runner for student or teacher
+router.post("/exams/run-code", authenticate, async (req, res) => {
+  const { question_id, code, language = "java", custom_input } = req.body;
+  if (!question_id) return res.status(400).json({ error: "ต้องระบุ question_id" });
+
+  const q = db.prepare("SELECT * FROM exam_questions WHERE id = ?").get(question_id);
+  if (!q) return res.status(404).json({ error: "ไม่พบโจทย์ข้อนี้" });
+
+  const exam = db.prepare("SELECT * FROM exams WHERE id = ?").get(q.exam_id);
+  if (!exam) return res.status(404).json({ error: "ไม่พบห้องสอบนี้" });
+
+  if (req.user.role === "student") {
+    const enrollment = db
+      .prepare("SELECT * FROM enrollments WHERE course_id = ? AND student_id = ?")
+      .get(exam.course_id, req.user.id);
+    if (!enrollment) return res.status(403).json({ error: "คุณยังไม่ได้ลงทะเบียนในวิชานี้" });
+  }
+
+  const lang = q.language || language || "java";
+
+  try {
+    if (custom_input !== undefined && custom_input !== null && String(custom_input).trim() !== "") {
+      const execResult = await executeCode({
+        language: lang,
+        code: code || "",
+        input: String(custom_input),
+        driverCode: q.test_driver || null,
+        timeoutMs: 4000,
+      });
+      return res.json({ mode: "custom", result: execResult });
+    }
+
+    let testCases = [];
+    if (q.test_cases) {
+      try {
+        testCases = JSON.parse(q.test_cases);
+      } catch {
+        testCases = [];
+      }
+    }
+
+    if (testCases.length === 0) {
+      const execResult = await executeCode({
+        language: lang,
+        code: code || "",
+        input: "",
+        driverCode: q.test_driver || null,
+        timeoutMs: 4000,
+      });
+      return res.json({ mode: "simple", result: execResult });
+    }
+
+    const isTeacher = req.user.role === "teacher" || req.user.role === "admin";
+    const runCases = isTeacher ? testCases : testCases.filter((tc) => !tc.is_hidden);
+
+    const tcResult = await runTestCases({
+      language: lang,
+      code: code || "",
+      testCases: runCases.length > 0 ? runCases : testCases.slice(0, 1),
+      driverCode: q.test_driver || null,
+      timeoutMs: 4000,
+      includeHiddenDetails: isTeacher,
+    });
+
+    res.json({ mode: "test_cases", ...tcResult });
+  } catch (err) {
+    console.error("[run-code] Error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดในการรันโค้ด: " + err.message });
+  }
+});
+
+// POST /api/exam-submissions/:submissionId/testcase-grade - Run test cases for a single submission
+router.post(
+  "/exam-submissions/:submissionId/testcase-grade",
+  authenticate,
+  requireRole("teacher", "admin"),
+  async (req, res) => {
+    const { submissionId } = req.params;
+    const { question_id } = req.body;
+
+    const sub = db.prepare("SELECT * FROM exam_submissions WHERE id = ?").get(submissionId);
+    if (!sub) return res.status(404).json({ error: "ไม่พบการส่งข้อสอบนี้" });
+
+    const q = db.prepare("SELECT * FROM exam_questions WHERE id = ? AND exam_id = ?").get(question_id, sub.exam_id);
+    if (!q) return res.status(404).json({ error: "ไม่พบโจทย์ข้อนี้" });
+
+    let testCases = [];
+    if (q.test_cases) {
+      try {
+        testCases = JSON.parse(q.test_cases);
+      } catch {
+        testCases = [];
+      }
+    }
+
+    if (testCases.length === 0) {
+      return res.status(400).json({ error: "โจทย์ข้อนี้ไม่ได้กำหนด Test Cases ไว้" });
+    }
+
+    const ans = db.prepare("SELECT * FROM exam_answers WHERE submission_id = ? AND question_id = ?").get(submissionId, question_id);
+    const studentCode = ans?.student_answer || "";
+
+    const tcResult = await runTestCases({
+      language: q.language || "java",
+      code: studentCode,
+      testCases,
+      driverCode: q.test_driver || null,
+      timeoutMs: 4000,
+      includeHiddenDetails: true,
+    });
+
+    const score = Math.round(tcResult.scoreRatio * q.points * 10) / 10;
+    const feedback = `ผ่านกรณีทดสอบ ${tcResult.passed}/${tcResult.total} เคส (${Math.round(tcResult.scoreRatio * 100)}%)`;
+
+    res.json({
+      score,
+      max_score: q.points,
+      feedback,
+      results: tcResult.results,
+      allPassed: tcResult.allPassed,
+    });
+  },
+);
+
+// POST /api/exams/:id/batch-testcase-grade - Teacher runs Test Cases auto-grading for all submissions
+router.post(
+  "/exams/:id/batch-testcase-grade",
+  authenticate,
+  requireRole("teacher", "admin"),
+  async (req, res) => {
+    const { id } = req.params;
+    const exam = db.prepare("SELECT * FROM exams WHERE id = ?").get(id);
+    if (!exam) return res.status(404).json({ error: "ไม่พบห้องสอบนี้" });
+
+    const course = db.prepare("SELECT * FROM courses WHERE id = ?").get(exam.course_id);
+    if (req.user.role === "teacher" && course.teacher_id !== req.user.id) {
+      return res.status(403).json({ error: "คุณไม่มีสิทธิ์ตรวจข้อสอบในวิชานี้" });
+    }
+
+    const submissions = db
+      .prepare("SELECT * FROM exam_submissions WHERE exam_id = ? AND status != 'in_progress'")
+      .all(id);
+
+    if (submissions.length === 0) {
+      return res.json({ message: "ไม่มีนิสิตที่ส่งข้อสอบสำหรับตรวจ", gradedCount: 0 });
+    }
+
+    const questions = db
+      .prepare("SELECT * FROM exam_questions WHERE exam_id = ? AND question_type = 'coding'")
+      .all(id);
+
+    let gradedSubmissions = 0;
+    for (const sub of submissions) {
+      for (const q of questions) {
+        let testCases = [];
+        if (q.test_cases) {
+          try {
+            testCases = JSON.parse(q.test_cases);
+          } catch {
+            testCases = [];
+          }
+        }
+        if (testCases.length === 0) continue;
+
+        const ans = db
+          .prepare("SELECT * FROM exam_answers WHERE submission_id = ? AND question_id = ?")
+          .get(sub.id, q.id);
+        const studentCode = ans?.student_answer || "";
+
+        const tcResult = await runTestCases({
+          language: q.language || "java",
+          code: studentCode,
+          testCases,
+          driverCode: q.test_driver || null,
+          timeoutMs: 4000,
+          includeHiddenDetails: true,
+        });
+
+        const score = Math.round(tcResult.scoreRatio * q.points * 10) / 10;
+        const feedback = `ผ่านกรณีทดสอบ ${tcResult.passed}/${tcResult.total} (${Math.round(tcResult.scoreRatio * 100)}%)`;
+
+        db.prepare(`
+          INSERT INTO exam_answers (submission_id, question_id, student_answer, manual_score, feedback, test_case_results)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(submission_id, question_id) DO UPDATE SET
+            manual_score = excluded.manual_score,
+            feedback = excluded.feedback,
+            test_case_results = excluded.test_case_results
+        `).run(sub.id, q.id, studentCode, score, feedback, JSON.stringify(tcResult.results));
+      }
+
+      // Recalculate total score
+      const allAns = db
+        .prepare("SELECT auto_score, manual_score FROM exam_answers WHERE submission_id = ?")
+        .all(sub.id);
+      let totalScore = 0;
+      for (const a of allAns) {
+        totalScore += a.manual_score != null ? a.manual_score : (a.auto_score || 0);
+      }
+
+      db.prepare(`
+        UPDATE exam_submissions
+        SET status = 'graded',
+            score = ?,
+            feedback = 'ตรวจข้อสอบด้วย Test Cases อัตโนมัติเรียบร้อยแล้ว'
+        WHERE id = ?
+      `).run(totalScore, sub.id);
+
+      gradedSubmissions++;
+    }
+
+    res.json({
+      message: `ตรวจข้อสอบด้วย Test Cases สำเร็จทั้งหมด ${gradedSubmissions} คน`,
+      gradedCount: gradedSubmissions,
     });
   },
 );

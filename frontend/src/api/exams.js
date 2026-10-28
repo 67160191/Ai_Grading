@@ -97,3 +97,21 @@ export async function getExamReview(id) {
   return res.data;
 }
 
+export async function runExamCode(data) {
+  const res = await api.post("/exams/run-code", data);
+  return res.data;
+}
+
+export async function testCaseGrade(submissionId, questionId) {
+  const res = await api.post(`/exam-submissions/${submissionId}/testcase-grade`, {
+    question_id: questionId,
+  });
+  return res.data;
+}
+
+export async function batchTestCaseGrade(id) {
+  const res = await api.post(`/exams/${id}/batch-testcase-grade`);
+  return res.data;
+}
+
+

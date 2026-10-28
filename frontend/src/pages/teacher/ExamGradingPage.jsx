@@ -11,6 +11,8 @@ import {
   exportExamResults,
   batchAiGrade,
   getExamSimilarity,
+  testCaseGrade,
+  batchTestCaseGrade,
 } from "../../api/exams";
 import CodeEditor from "../../components/CodeEditor";
 
@@ -23,12 +25,15 @@ export default function ExamGradingPage() {
   const [showSimilarityModal, setShowSimilarityModal] = useState(false);
   const [selectedPair, setSelectedPair] = useState(null);
   const [isBatchGrading, setIsBatchGrading] = useState(false);
+  const [isBatchTcGrading, setIsBatchTcGrading] = useState(false);
 
   const [gradeForm, setGradeForm] = useState({
     answers: [],
     overall_feedback: "",
   });
   const [loadingAiQId, setLoadingAiQId] = useState(null);
+  const [loadingTcQId, setLoadingTcQId] = useState(null);
+  const [tcResultsMap, setTcResultsMap] = useState({});
 
   const { data, isLoading } = useQuery({
     queryKey: ["exam-submissions", examId],
@@ -71,6 +76,20 @@ export default function ExamGradingPage() {
     onError: (err) => {
       setIsBatchGrading(false);
       showToast(err.response?.data?.error || "เกิดข้อผิดพลาดในการตรวจอัตโนมัติ", "error");
+    },
+  });
+
+  const batchTcMut = useMutation({
+    mutationFn: () => batchTestCaseGrade(examId),
+    onMutate: () => setIsBatchTcGrading(true),
+    onSuccess: (res) => {
+      setIsBatchTcGrading(false);
+      showToast(res.message, "success");
+      qc.invalidateQueries({ queryKey: ["exam-submissions", examId] });
+    },
+    onError: (err) => {
+      setIsBatchTcGrading(false);
+      showToast(err.response?.data?.error || "เกิดข้อผิดพลาดในการตรวจด้วย Test Cases", "error");
     },
   });
 
@@ -138,6 +157,29 @@ export default function ExamGradingPage() {
       showToast(err.response?.data?.error || "AI ตรวจไม่สำเร็จ", "error");
     } finally {
       setLoadingAiQId(null);
+    }
+  };
+
+  const handleTestCaseGrade = async (qId) => {
+    setLoadingTcQId(qId);
+    try {
+      const result = await testCaseGrade(selectedSubId, qId);
+      if (result.score !== undefined) {
+        handleScoreChange(qId, result.score);
+      }
+      if (result.feedback) {
+        handleFeedbackChange(qId, result.feedback);
+      }
+      setTcResultsMap((prev) => ({ ...prev, [qId]: result.results }));
+      if (result.allPassed) {
+        showToast("🎉 ผ่านทุก Test Cases (คะแนนเต็ม)", "success");
+      } else {
+        showToast(result.feedback, "info");
+      }
+    } catch (err) {
+      showToast(err.response?.data?.error || "ตรวจ Test Cases ไม่สำเร็จ", "error");
+    } finally {
+      setLoadingTcQId(null);
     }
   };
 
@@ -239,6 +281,29 @@ export default function ExamGradingPage() {
                 <>
                   <span>🤖</span>
                   <span>ตรวจด้วย AI ทั้งห้อง</span>
+                </>
+              )}
+            </button>
+
+            {/* Batch Test Cases Grading Button */}
+            <button
+              onClick={() => {
+                if (confirm("ต้องการรันตรวจข้อเขียนโค้ดด้วย Test Cases ทั้งห้องสำหรับนิสิตทุกคนที่ส่งแล้วใช่หรือไม่?")) {
+                  batchTcMut.mutate();
+                }
+              }}
+              disabled={isBatchTcGrading}
+              className="px-3.5 py-2 rounded-lg text-sm font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 transition-all flex items-center gap-1.5 shadow-md disabled:opacity-50"
+            >
+              {isBatchTcGrading ? (
+                <>
+                  <span className="animate-spin inline-block">⏳</span>
+                  <span>กำลังรัน Test Cases...</span>
+                </>
+              ) : (
+                <>
+                  <span>🧪</span>
+                  <span>ตรวจด้วย Test Cases ทั้งห้อง</span>
                 </>
               )}
             </button>
@@ -602,8 +667,69 @@ export default function ExamGradingPage() {
                               </details>
                             )}
 
-                            {/* AI Helper Button */}
-                            <div className="flex justify-end">
+                            {/* Test Cases Results Breakdown if available */}
+                            {(tcResultsMap[q.id] || q.test_case_results) && (
+                              <div className="bg-slate-900 text-slate-100 p-3 rounded-xl space-y-2 text-xs">
+                                <div className="font-semibold text-slate-300 flex items-center justify-between border-b border-slate-800 pb-1.5">
+                                  <span>🧪 ผลการทดสอบ Test Cases:</span>
+                                  <span className="text-[11px] text-slate-400">
+                                    {(tcResultsMap[q.id] || JSON.parse(q.test_case_results || "[]")).filter((t) => t.passed).length}/
+                                    {(tcResultsMap[q.id] || JSON.parse(q.test_case_results || "[]")).length} Passed
+                                  </span>
+                                </div>
+                                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                  {(tcResultsMap[q.id] || JSON.parse(q.test_case_results || "[]")).map((tc, tIdx) => (
+                                    <div
+                                      key={tIdx}
+                                      className={`p-2 rounded flex items-center justify-between text-[11px] font-mono ${
+                                        tc.passed ? "bg-slate-800/80 border border-emerald-500/30" : "bg-slate-800/80 border border-rose-500/30"
+                                      }`}
+                                    >
+                                      <div>
+                                        <span className="font-semibold text-slate-200">{tc.name || `Case ${tIdx + 1}`}</span>
+                                        {tc.is_hidden && (
+                                          <span className="ml-1.5 text-[10px] text-purple-400 bg-purple-900/40 px-1 rounded">ลับ</span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {tc.execution_time_ms != null && (
+                                          <span className="text-slate-400">{tc.execution_time_ms}ms</span>
+                                        )}
+                                        <span
+                                          className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
+                                            tc.passed ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+                                          }`}
+                                        >
+                                          {tc.passed ? "PASS" : "FAIL"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Action Buttons: Test Cases & AI Helper */}
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleTestCaseGrade(q.id)}
+                                disabled={loadingTcQId === q.id}
+                                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                              >
+                                {loadingTcQId === q.id ? (
+                                  <>
+                                    <span className="animate-spin inline-block">⏳</span>
+                                    <span>กำลังรัน Test Cases...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>🧪</span>
+                                    <span>รันตรวจ Test Cases</span>
+                                  </>
+                                )}
+                              </button>
+
                               <button
                                 type="button"
                                 onClick={() => handleAiGrade(q.id)}

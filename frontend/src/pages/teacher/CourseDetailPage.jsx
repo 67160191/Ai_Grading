@@ -278,6 +278,12 @@ export default function CourseDetailPage() {
           ? `public class Solution {\n    // เขียนโค้ด Java ตรงนี้\n}`
           : "",
       solution_guide: "",
+      language: "java",
+      test_cases:
+        type === "coding"
+          ? [{ id: 1, name: "ตัวอย่างที่ 1", input: "", expected_output: "", is_hidden: false }]
+          : [],
+      test_driver: "",
     };
     setExamForm((prev) => ({
       ...prev,
@@ -309,6 +315,49 @@ export default function CourseDetailPage() {
         const newOpts = [...q.options];
         newOpts[optIdx] = val;
         return { ...q, options: newOpts };
+      }),
+    }));
+  };
+
+  const handleAddTestCase = (qIdx) => {
+    setExamForm((prev) => ({
+      ...prev,
+      questions: prev.questions.map((q, i) => {
+        if (i !== qIdx) return q;
+        const currentTcs = Array.isArray(q.test_cases) ? q.test_cases : [];
+        const newTc = {
+          id: currentTcs.length + 1,
+          name: `ตัวอย่าง/เคสที่ ${currentTcs.length + 1}`,
+          input: "",
+          expected_output: "",
+          is_hidden: false,
+        };
+        return { ...q, test_cases: [...currentTcs, newTc] };
+      }),
+    }));
+  };
+
+  const handleUpdateTestCase = (qIdx, tcIdx, field, val) => {
+    setExamForm((prev) => ({
+      ...prev,
+      questions: prev.questions.map((q, i) => {
+        if (i !== qIdx) return q;
+        const currentTcs = Array.isArray(q.test_cases) ? [...q.test_cases] : [];
+        currentTcs[tcIdx] = { ...currentTcs[tcIdx], [field]: val };
+        return { ...q, test_cases: currentTcs };
+      }),
+    }));
+  };
+
+  const handleRemoveTestCase = (qIdx, tcIdx) => {
+    setExamForm((prev) => ({
+      ...prev,
+      questions: prev.questions.map((q, i) => {
+        if (i !== qIdx) return q;
+        const currentTcs = Array.isArray(q.test_cases)
+          ? q.test_cases.filter((_, ti) => ti !== tcIdx)
+          : [];
+        return { ...q, test_cases: currentTcs };
       }),
     }));
   };
@@ -1461,6 +1510,101 @@ export default function CourseDetailPage() {
                             placeholder="คำอธิบาย logic ที่ถูกต้อง (เน้นตรวจการทำงาน/ผลลัพธ์ของโค้ด ไม่หักคะแนนเรื่องรูปแบบหรือความสวยงาม)..."
                             className="w-full text-xs border border-gray-300 rounded p-2 bg-white"
                           />
+
+                          {/* Test Cases Sandbox Configuration */}
+                          <div className="mt-3 p-3 bg-white rounded-lg border border-gray-200 space-y-3">
+                            <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                              <div>
+                                <h5 className="font-bold text-xs text-gray-800 flex items-center gap-1.5">
+                                  <span>🧪</span>
+                                  <span>กรณีทดสอบ (Test Cases) สำหรับรันและตรวจอัตโนมัติ</span>
+                                </h5>
+                                <p className="text-[11px] text-gray-500">
+                                  สามารถกำหนดทั้งตัวอย่างให้นิสิตลองรันได้ และเคสลับ (Hidden) สำหรับตรวจให้คะแนน
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleAddTestCase(idx)}
+                                className="px-2.5 py-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors"
+                              >
+                                + เพิ่ม Test Case
+                              </button>
+                            </div>
+
+                            <div className="space-y-2.5">
+                              {q.test_cases?.map((tc, tcIdx) => (
+                                <div key={tcIdx} className="p-2.5 rounded-lg border border-gray-200 bg-gray-50 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <input
+                                      type="text"
+                                      value={tc.name || ""}
+                                      onChange={(e) => handleUpdateTestCase(idx, tcIdx, "name", e.target.value)}
+                                      placeholder={`ชื่อเคสที่ ${tcIdx + 1}`}
+                                      className="text-xs font-semibold bg-transparent border-b border-gray-300 focus:outline-none focus:border-indigo-500 pb-0.5"
+                                    />
+                                    <div className="flex items-center gap-3">
+                                      <label className="flex items-center gap-1.5 text-xs text-purple-700 font-medium cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={!!tc.is_hidden}
+                                          onChange={(e) => handleUpdateTestCase(idx, tcIdx, "is_hidden", e.target.checked)}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded"
+                                        />
+                                        <span>เคสลับ (Hidden Test Case)</span>
+                                      </label>
+                                      {q.test_cases.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveTestCase(idx, tcIdx)}
+                                          className="text-xs text-red-500 hover:text-red-700"
+                                        >
+                                          ลบ
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <div>
+                                      <span className="text-[10px] text-gray-500 font-semibold block mb-0.5">Input (stdin):</span>
+                                      <textarea
+                                        rows={2}
+                                        value={tc.input || ""}
+                                        onChange={(e) => handleUpdateTestCase(idx, tcIdx, "input", e.target.value)}
+                                        placeholder="ข้อมูลนำเข้าผ่าน Scanner / stdin..."
+                                        className="w-full font-mono text-[11px] border border-gray-300 rounded p-1.5 bg-white"
+                                      />
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-gray-500 font-semibold block mb-0.5">Expected Output (stdout):</span>
+                                      <textarea
+                                        rows={2}
+                                        value={tc.expected_output || ""}
+                                        onChange={(e) => handleUpdateTestCase(idx, tcIdx, "expected_output", e.target.value)}
+                                        placeholder="ผลลัพธ์ที่ถูกต้องที่คาดหวัง..."
+                                        className="w-full font-mono text-[11px] border border-gray-300 rounded p-1.5 bg-white"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Optional Test Driver */}
+                            <details className="text-xs text-gray-500">
+                              <summary className="cursor-pointer font-medium text-indigo-600">
+                                ⚙️ ขั้นสูง: Test Driver / Main method wrapper (กรณีโจทย์เป็น Method หรือ Class)
+                              </summary>
+                              <textarea
+                                rows={4}
+                                value={q.test_driver || ""}
+                                onChange={(e) => handleUpdateQuestion(idx, "test_driver", e.target.value)}
+                                placeholder="import java.util.Scanner;\npublic class Main {\n    public static void main(String[] args) {\n        // โค้ดเรียก student Solution method...\n    }\n}"
+                                className="w-full font-mono text-xs bg-slate-900 text-slate-100 p-2.5 rounded-lg focus:outline-none mt-2"
+                              />
+                            </details>
+                          </div>
                         </div>
                       )}
 

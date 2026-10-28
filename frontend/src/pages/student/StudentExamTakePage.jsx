@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "../../context/ToastContext";
-import { getExam, startExam, submitExam, autosaveExam } from "../../api/exams";
+import { getExam, startExam, submitExam, autosaveExam, runExamCode } from "../../api/exams";
 import CodeEditor from "../../components/CodeEditor";
 
 export default function StudentExamTakePage() {
@@ -19,6 +19,12 @@ export default function StudentExamTakePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showFsPrompt, setShowFsPrompt] = useState(false);
+
+  // Code runner states per question
+  const [runningCode, setRunningCode] = useState({});
+  const [runResults, setRunResults] = useState({});
+  const [customInputs, setCustomInputs] = useState({});
+  const [showCustomInput, setShowCustomInput] = useState({});
 
   const timerRef = useRef(null);
   const autoSaveTimerRef = useRef(null);
@@ -229,6 +235,56 @@ export default function StudentExamTakePage() {
 
   const handleAnswerChange = (qId, val) => {
     setAnswers((prev) => ({ ...prev, [qId]: val }));
+  };
+
+  const handleRunSampleTests = async (questionId) => {
+    setRunningCode((prev) => ({ ...prev, [questionId]: true }));
+    try {
+      const code = answers[questionId] || "";
+      const res = await runExamCode({
+        question_id: questionId,
+        code,
+      });
+      setRunResults((prev) => ({ ...prev, [questionId]: res }));
+      if (res.allPassed) {
+        showToast("🎉 ยอดเยี่ยม! ผ่านทุกตัวอย่างกรณีทดสอบ", "success");
+      } else if (res.status === "Compilation Error") {
+        showToast("คอมไพล์ไม่ผ่าน กรุณาตรวจสอบ Syntax ของโค้ด", "error");
+      } else {
+        showToast(`ผลการทดสอบ: ผ่าน ${res.passed}/${res.total} เคส`, "info");
+      }
+    } catch (err) {
+      showToast(err.response?.data?.error || "ไม่สามารถรันโค้ดได้", "error");
+    } finally {
+      setRunningCode((prev) => ({ ...prev, [questionId]: false }));
+    }
+  };
+
+  const handleRunCustomInput = async (questionId) => {
+    setRunningCode((prev) => ({ ...prev, [questionId]: true }));
+    try {
+      const code = answers[questionId] || "";
+      const input = customInputs[questionId] || "";
+      const res = await runExamCode({
+        question_id: questionId,
+        code,
+        custom_input: input,
+      });
+      setRunResults((prev) => ({ ...prev, [questionId]: res }));
+      showToast("รันโค้ดสำเร็จ", "success");
+    } catch (err) {
+      showToast(err.response?.data?.error || "ไม่สามารถรันโค้ดได้", "error");
+    } finally {
+      setRunningCode((prev) => ({ ...prev, [questionId]: false }));
+    }
+  };
+
+  const handleClearRunResult = (questionId) => {
+    setRunResults((prev) => {
+      const copy = { ...prev };
+      delete copy[questionId];
+      return copy;
+    });
   };
 
   const doSubmit = () => {
@@ -484,6 +540,222 @@ export default function StudentExamTakePage() {
                     placeholder="// เขียนโค้ด Java ที่นี่... (กด Tab เพื่อย่อหน้าได้)"
                     minHeight="260px"
                   />
+
+                  {/* Code Runner & Test Cases Sandbox */}
+                  <div className="pt-2 border-t border-gray-100 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRunSampleTests(q.id)}
+                          disabled={runningCode[q.id]}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+                        >
+                          {runningCode[q.id] ? (
+                            <>
+                              <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                              </svg>
+                              <span>กำลังคอมไพล์ &amp; รัน...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>▶️</span>
+                              <span>ทดสอบรันโค้ด (Run Tests)</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowCustomInput((prev) => ({
+                              ...prev,
+                              [q.id]: !prev[q.id],
+                            }))
+                          }
+                          className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
+                            showCustomInput[q.id]
+                              ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+                              : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                          }`}
+                        >
+                          ⌨️ ป้อน Input เอง
+                        </button>
+                      </div>
+
+                      {q.test_cases && q.test_cases.length > 0 && (
+                        <div className="text-xs text-gray-500 flex items-center gap-1.5">
+                          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+                          <span>
+                            มี {q.test_cases.filter((tc) => !tc.is_hidden).length} ตัวอย่างโจทย์
+                            {q.test_cases.some((tc) => tc.is_hidden) &&
+                              ` (+ ${q.test_cases.filter((tc) => tc.is_hidden).length} เคสลับตรวจตอนส่ง)`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Custom Input Drawer */}
+                    {showCustomInput[q.id] && (
+                      <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-2 text-xs">
+                        <label className="font-semibold text-gray-700 block">
+                          Standard Input (stdin):
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={customInputs[q.id] || ""}
+                          onChange={(e) =>
+                            setCustomInputs((prev) => ({
+                              ...prev,
+                              [q.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="พิมพ์ข้อความหรือตัวเลขที่ต้องการส่งเข้า Scanner..."
+                          className="w-full font-mono text-xs border border-gray-300 rounded-lg p-2 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRunCustomInput(q.id)}
+                          disabled={runningCode[q.id]}
+                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg shadow-xs"
+                        >
+                          รันด้วย Input นี้
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Execution & Test Cases Results Display */}
+                    {runResults[q.id] && (
+                      <div className="rounded-xl border border-gray-200 overflow-hidden shadow-xs bg-slate-900 text-slate-100 text-xs">
+                        {/* Header bar */}
+                        <div className="px-3.5 py-2.5 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-semibold text-slate-300">
+                              💻 Execution Console:
+                            </span>
+                            {runResults[q.id].allPassed ? (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                                ✅ ผ่านทุกตัวอย่าง ({runResults[q.id].passed}/{runResults[q.id].total})
+                              </span>
+                            ) : runResults[q.id].status === "Compilation Error" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-bold border border-rose-500/30">
+                                ❌ Compilation Error
+                              </span>
+                            ) : runResults[q.id].status === "Time Limit Exceeded (TLE)" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30">
+                                ⏱️ Time Limit Exceeded (&gt;4s)
+                              </span>
+                            ) : runResults[q.id].mode === "test_cases" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30">
+                                ⚠️ ผ่าน {runResults[q.id].passed}/{runResults[q.id].total} เคส
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 font-bold border border-indigo-500/30">
+                                {runResults[q.id].result?.status || "Completed"}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleClearRunResult(q.id)}
+                            className="text-slate-400 hover:text-white"
+                            title="ปิดผลลัพธ์"
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        {/* Test Cases Results List */}
+                        {runResults[q.id].mode === "test_cases" && (
+                          <div className="p-3 space-y-2.5 max-h-72 overflow-y-auto">
+                            {runResults[q.id].results?.map((tc, tcIdx) => (
+                              <div
+                                key={tcIdx}
+                                className={`p-2.5 rounded-lg border ${
+                                  tc.passed
+                                    ? "bg-slate-800/60 border-emerald-500/30"
+                                    : "bg-slate-800/60 border-rose-500/30"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <span className="font-semibold text-slate-200">
+                                    {tc.name}
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    {tc.execution_time_ms != null && (
+                                      <span className="text-slate-400 font-mono text-[11px]">
+                                        {tc.execution_time_ms} ms
+                                      </span>
+                                    )}
+                                    <span
+                                      className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
+                                        tc.passed
+                                          ? "bg-emerald-600 text-white"
+                                          : "bg-rose-600 text-white"
+                                      }`}
+                                    >
+                                      {tc.passed ? "PASSED" : tc.status || "FAILED"}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {tc.error && (
+                                  <pre className="font-mono text-rose-300 text-[11px] bg-black/40 p-2 rounded mb-2 overflow-x-auto whitespace-pre-wrap">
+                                    {tc.error}
+                                  </pre>
+                                )}
+
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[11px]">
+                                  <div className="bg-black/30 p-2 rounded">
+                                    <span className="text-slate-400 block text-[10px]">Input:</span>
+                                    <span className="text-slate-200 whitespace-pre-wrap">{tc.input || "(empty)"}</span>
+                                  </div>
+                                  <div className="bg-black/30 p-2 rounded">
+                                    <span className="text-slate-400 block text-[10px]">Expected:</span>
+                                    <span className="text-emerald-300 whitespace-pre-wrap">{tc.expected_output || "(empty)"}</span>
+                                  </div>
+                                  <div className="bg-black/30 p-2 rounded">
+                                    <span className="text-slate-400 block text-[10px]">Your Output:</span>
+                                    <span
+                                      className={`whitespace-pre-wrap ${
+                                        tc.passed ? "text-emerald-300" : "text-rose-300 font-bold"
+                                      }`}
+                                    >
+                                      {tc.actual_output || "(no output)"}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Custom / Simple Output */}
+                        {(runResults[q.id].mode === "custom" || runResults[q.id].mode === "simple") && (
+                          <div className="p-3 space-y-2">
+                            {runResults[q.id].result?.executionTimeMs != null && (
+                              <div className="text-[11px] text-slate-400 font-mono">
+                                เวลาประมวลผล: {runResults[q.id].result.executionTimeMs} ms
+                              </div>
+                            )}
+                            {runResults[q.id].result?.error && (
+                              <pre className="font-mono text-rose-300 text-[11px] bg-black/40 p-2.5 rounded overflow-x-auto whitespace-pre-wrap">
+                                {runResults[q.id].result.error}
+                              </pre>
+                            )}
+                            <div className="bg-black/50 p-2.5 rounded font-mono text-[11px]">
+                              <span className="text-slate-400 block text-[10px] mb-1">Standard Output:</span>
+                              <pre className="text-emerald-400 whitespace-pre-wrap">
+                                {runResults[q.id].result?.output || "(ไม่มีผลลัพธ์ที่พิมพ์ออกมา)"}
+                              </pre>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
