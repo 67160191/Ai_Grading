@@ -1,0 +1,40 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-ai-grading
+    restart: always
+    ports:
+      # set the host port by your own, and the container port is 11434
+      - "11941:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - ollama-net
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all # ใช้ GPU ทั้งหมด
+              capabilities: [gpu]
+
+volumes:
+  ollama_data:
+
+networks:
+  ollama-net:
+    driver: bridge
+
+# ทำที่เครื่อง 10.80.39.41
+# rebuild ทั้งหมด:
+#
+# docker compose -f docker-compose-ollama.yml down
+# docker compose -f docker-compose-ollama.yml up -d --build
+# docker exec ollama-ai-grading ollama pull qwen3-coder:30b
+# docker logs ollama-ai-grading -f
+#
+# ตรวจสอบ
+# curl http://10.80.39.41:11941/api/tags

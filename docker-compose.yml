@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    volumes:
+      - backend_data:/app/data
+      # multer resolves uploads relative to src/routes -> /app/src/uploads
+      - backend_uploads:/app/src/uploads
+    expose:
+      - "3000"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "8800:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_data:
+  backend_uploads:

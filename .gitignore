@@ -1,0 +1,51 @@
+# Backend
+backend/.env
+backend/node_modules/
+backend/data/
+backend/uploads/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/image-analyzer/
+
+# Docker
+.docker-compose.yml.swp
+
+# Logs & Temp
+*.log
+*.swp
+*.swo
+.DS_Store
+.vscode/settings.json
+
+# IDE
+.idea/
+
+# OS
+Thumbs.db
+
+# not use md files
+.claude/
+md/
+KM/
+backup_db/
+notes.md
+plan_admin_global_ollama_config.md
+CLAUDE.md
+BUG-FIX-LEVEL.md
+BUG-FIX-RUBRIC-LEVEL.md
+BUg-FIX-TZ.md
+ER-DIAGRAM.md
+TODO.md
+db-fix.md
+TO-FIX.md
+DONE-todo-canvas.md
+canvas-notes-km.md
+DONE-todo-before-deploy.md
+DEPLOY-STEPS-canvas.md
+TODO-canvas-calibrate.md
+submission-flow.md
+PROMPT.md
+cron_on_server.md

@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* safelist — สีการ์ดวิชาทั้ง 10 สี (ป้องกัน Tailwind purge ตัด class ที่ generate จาก JS object) */
+/* bg-indigo-50 border-indigo-200 hover:border-indigo-400 bg-indigo-100 text-indigo-600 text-indigo-700 ring-indigo-400 dot-indigo-400 */
+/* bg-pink-50 border-pink-200 hover:border-pink-400 bg-pink-100 text-pink-600 text-pink-700 ring-pink-400 */
+/* bg-emerald-50 border-emerald-200 hover:border-emerald-400 bg-emerald-100 text-emerald-600 text-emerald-700 ring-emerald-400 */
+/* bg-amber-50 border-amber-200 hover:border-amber-400 bg-amber-100 text-amber-600 text-amber-700 ring-amber-400 */
+/* bg-sky-50 border-sky-200 hover:border-sky-400 bg-sky-100 text-sky-600 text-sky-700 ring-sky-400 */
+/* bg-violet-50 border-violet-200 hover:border-violet-400 bg-violet-100 text-violet-600 text-violet-700 ring-violet-400 */
+/* bg-rose-50 border-rose-200 hover:border-rose-400 bg-rose-100 text-rose-600 text-rose-700 ring-rose-400 */
+/* bg-orange-50 border-orange-200 hover:border-orange-400 bg-orange-100 text-orange-600 text-orange-700 ring-orange-400 bg-orange-400 */
+/* bg-fuchsia-50 border-fuchsia-200 hover:border-fuchsia-400 bg-fuchsia-100 text-fuchsia-600 text-fuchsia-700 ring-fuchsia-400 bg-fuchsia-400 */
+/* bg-white border-gray-200 hover:border-gray-400 bg-gray-100 text-gray-600 text-gray-700 ring-gray-400 */
+
+html {
+  font-size: 18px;
+  font-family: "Sarabun", sans-serif;
+  color: #111827;
+  background-color: #ffffff;
+}
