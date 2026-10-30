@@ -21,6 +21,7 @@ const registerLimiter = rateLimit({
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20, // Max 20 failed attempts per username+IP in 15 minutes
+  validate: { keyGeneratorIpFallback: false },
   skipSuccessfulRequests: true, // Crucial: legitimate student logins never count against the limit
   keyGenerator: (req) => {
     const ip = req.ip || req.socket?.remoteAddress || "ip";

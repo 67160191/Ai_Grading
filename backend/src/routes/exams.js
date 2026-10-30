@@ -14,6 +14,7 @@ const MAX_ANSWER_CHARS = 100000; // 100 KB max per answer text
 const runCodeLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
+  validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => (req.user?.id ? `user_${req.user.id}` : (req.ip || "unknown")),
   message: { error: "คุณกดทดสอบโค้ดบ่อยเกินไป กรุณารอสักครู่ (ไม่เกิน 30 ครั้ง/นาที)" },
   standardHeaders: true,

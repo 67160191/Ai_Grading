@@ -4,6 +4,7 @@ import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { randomBytes } from "crypto";
+import cluster from "node:cluster";
 
 function generateJoinCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -17,14 +18,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const db = new Database(join(__dirname, "../../data/app.db"));
 
-// Enable WAL mode for better performance
+// Enable WAL mode and high-performance tuning for concurrent exam takers (106+ students)
 db.pragma("journal_mode = WAL");
+db.pragma("synchronous = NORMAL");
 db.pragma("foreign_keys = ON");
-db.pragma("busy_timeout = 10000");
+db.pragma("busy_timeout = 15000");
+db.pragma("cache_size = -64000"); // 64 MB cache
+db.pragma("temp_store = MEMORY");
 
-// Initialize schema
-const schema = readFileSync(join(__dirname, "schema.sql"), "utf-8");
-db.exec(schema);
+// Only execute schema migrations, seeds, and maintenance in the primary cluster process
+if (cluster.isPrimary) {
+  // Initialize schema
+  const schema = readFileSync(join(__dirname, "schema.sql"), "utf-8");
+  db.exec(schema);
 
 // Migrations — เพิ่ม column ใหม่ถ้ายังไม่มี (safe for existing DB)
 const migrations = [
@@ -338,13 +344,14 @@ if (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
   }
 }
 
-// Reset grading jobs ที่ค้างอยู่ตอน server restart
-db.prepare(
-  `UPDATE submissions SET status = 'pending' WHERE status = 'grading'`,
-).run();
-db.prepare(
-  `UPDATE grading_jobs SET status = 'failed', error = 'Server restarted' WHERE status IN ('pending', 'running')`,
-).run();
+  // Reset grading jobs ที่ค้างอยู่ตอน server restart
+  db.prepare(
+    `UPDATE submissions SET status = 'pending' WHERE status = 'grading'`,
+  ).run();
+  db.prepare(
+    `UPDATE grading_jobs SET status = 'failed', error = 'Server restarted' WHERE status IN ('pending', 'running')`,
+  ).run();
+}
 
 // ponytail: SQLite column DEFAULT is baked in at CREATE TABLE time, so fixing
 // schema.sql doesn't retroactively fix existing tables' defaults. Use this
