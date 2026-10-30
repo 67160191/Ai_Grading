@@ -1,7 +1,7 @@
 # Backend
-backend/.env
 backend/node_modules/
-backend/data/
+backend/data/*.db-wal
+backend/data/*.db-shm
 backend/uploads/
 
 # Frontend

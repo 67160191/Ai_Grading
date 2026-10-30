@@ -1,5 +1,5 @@
 node_modules/
-data/
-uploads/
-.env
-USERS.md
+data/*.db-wal
+data/*.db-shm
+src/uploads/*
+!src/uploads/.gitkeep

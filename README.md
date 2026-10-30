@@ -94,6 +94,8 @@ AI-Feedback/
 
 ## การติดตั้งและรัน
 
+> 💡 สำหรับการนำไปรันบน **Linux Server สำหรับห้องสอบ 106 คน** สามารถดูคู่มือฉบับสมบูรณ์ได้ที่ **[LINUX_DEPLOYMENT_GUIDE.md](LINUX_DEPLOYMENT_GUIDE.md)** หรือรัน `./deploy_linux.sh` ได้ทันที
+
 ### วิธีที่ 1 — Docker (แนะนำ)
 
 #### ความต้องการ
@@ -103,18 +105,17 @@ AI-Feedback/
 #### ขั้นตอน
 
 ```bash
-# 1. copy และแก้ไข .env
-cp backend/.env.example backend/.env
-# แก้ JWT_SECRET และ OLLAMA_URL ใน backend/.env
+# 1. กำหนดสิทธิ์โฟลเดอร์ข้อมูล (สำหรับ Linux)
+mkdir -p backend/data backend/src/uploads
+chmod -R 777 backend/data backend/src/uploads
 
 # 2. build และ start
 docker compose up -d --build
 ```
 
-ระบบจะรันที่ `http://localhost` (port 80)
+ระบบจะรันที่ `http://localhost:8800` (หรือ `http://<SERVER_IP>:8800`)
 
-> **OLLAMA_URL**: ถ้า Ollama รันบนเครื่องเดียวกับ Docker ให้ใช้ `http://host.docker.internal:11434`
-> ถ้า Ollama รันบน GPU Server แยก ให้ใส่ IP จริง เช่น `http://10.80.39.41:11434`
+> **ฐานข้อมูลและค่าคอนฟิก**: ระบบมีไฟล์ฐานข้อมูล (`backend/data/app.db`) ที่บรรจุข้อมูลอาจารย์และนิสิต 106 คนไว้แล้ว และไฟล์ `backend/.env` พร้อมใช้งานทันที
 
 **คำสั่งที่ใช้บ่อย:**
 
@@ -125,7 +126,7 @@ docker compose logs -f        # ดู logs
 docker compose restart        # restart ทุก service
 ```
 
-ข้อมูล (SQLite DB + uploads) เก็บใน Docker volumes — ไม่หายเมื่อ restart
+ข้อมูล (SQLite DB + uploads) เก็บในโฟลเดอร์ `./backend/data` และ `./backend/src/uploads` — ปลอดภัยและไม่สูญหายเมื่อ restart container
 
 ---
 

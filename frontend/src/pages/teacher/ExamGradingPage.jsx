@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "../../context/ToastContext";
@@ -36,12 +36,51 @@ export default function ExamGradingPage() {
   const [loadingTcQId, setLoadingTcQId] = useState(null);
   const [tcResultsMap, setTcResultsMap] = useState({});
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [groupFilter, setGroupFilter] = useState("all");
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["exam-submissions", examId],
     queryFn: () => getExamSubmissions(examId),
     refetchInterval: autoRefresh ? 15000 : false,
   });
+
+  const studentsList = data?.students || [];
+
+  const availableGroups = useMemo(() => {
+    return Array.from(new Set(studentsList.map((s) => s.group_no).filter(Boolean))).sort();
+  }, [studentsList]);
+
+  const filteredStudents = useMemo(() => {
+    return studentsList.filter((s) => {
+      // 1. Search filter (by student_username or student_name)
+      if (searchTerm.trim()) {
+        const q = searchTerm.trim().toLowerCase();
+        const matchUsername = (s.student_username || "").toLowerCase().includes(q);
+        const matchName = (s.student_name || "").toLowerCase().includes(q);
+        if (!matchUsername && !matchName) return false;
+      }
+
+      // 2. Group filter
+      if (groupFilter !== "all") {
+        if ((s.group_no || "") !== groupFilter) return false;
+      }
+
+      // 3. Status filter
+      if (statusFilter === "in_progress") {
+        if (s.status !== "in_progress") return false;
+      } else if (statusFilter === "submitted") {
+        if (s.status !== "submitted") return false;
+      } else if (statusFilter === "graded") {
+        if (s.status !== "graded") return false;
+      } else if (statusFilter === "not_started") {
+        if (s.submission_id) return false;
+      }
+
+      return true;
+    });
+  }, [studentsList, searchTerm, groupFilter, statusFilter]);
 
   const { data: subDetailData, isLoading: subDetailLoading } = useQuery({
     queryKey: ["exam-submission-detail", selectedSubId],
@@ -454,23 +493,68 @@ export default function ExamGradingPage() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           <div>
-            <h2 className="font-semibold text-gray-800">รายชื่อนิสิตและสถานะการสอบสด</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-gray-800">รายชื่อนิสิตและสถานะการสอบสด</h2>
+              <span className="text-xs text-gray-500 font-normal">
+                (แสดง {filteredStudents.length} จาก {students?.length || 0} คน)
+              </span>
+            </div>
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
-              <span className="text-xs px-2.5 py-1 bg-gray-100 text-gray-700 rounded-lg font-medium">
+              <button
+                type="button"
+                onClick={() => setStatusFilter("all")}
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                  statusFilter === "all"
+                    ? "bg-gray-800 text-white shadow-xs font-bold ring-2 ring-gray-400"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
+              >
                 ทั้งหมด {students?.length || 0} คน
-              </span>
-              <span className="text-xs px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg font-medium">
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("in_progress")}
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                  statusFilter === "in_progress"
+                    ? "bg-blue-600 text-white shadow-xs font-bold ring-2 ring-blue-300"
+                    : "bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                }`}
+              >
                 ⚡ กำลังทำ {students?.filter((s) => s.status === "in_progress").length || 0} คน
-              </span>
-              <span className="text-xs px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-medium">
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("submitted")}
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                  statusFilter === "submitted"
+                    ? "bg-amber-600 text-white shadow-xs font-bold ring-2 ring-amber-300"
+                    : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
+                }`}
+              >
                 ส่งแล้ว {students?.filter((s) => s.status === "submitted").length || 0} คน
-              </span>
-              <span className="text-xs px-2.5 py-1 bg-green-50 text-green-700 border border-green-200 rounded-lg font-medium">
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("graded")}
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                  statusFilter === "graded"
+                    ? "bg-green-700 text-white shadow-xs font-bold ring-2 ring-green-400"
+                    : "bg-green-50 text-green-700 border border-green-200 hover:bg-green-100"
+                }`}
+              >
                 ✓ ตรวจแล้ว {students?.filter((s) => s.status === "graded").length || 0} คน
-              </span>
-              <span className="text-xs px-2.5 py-1 bg-gray-50 text-gray-500 border border-gray-200 rounded-lg">
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("not_started")}
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                  statusFilter === "not_started"
+                    ? "bg-gray-600 text-white shadow-xs font-bold ring-2 ring-gray-400"
+                    : "bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100"
+                }`}
+              >
                 ยังไม่เข้า {students?.filter((s) => !s.submission_id).length || 0} คน
-              </span>
+              </button>
             </div>
           </div>
 
@@ -495,6 +579,66 @@ export default function ExamGradingPage() {
           </div>
         </div>
 
+        {/* Quick Search & Group Filter Bar */}
+        <div className="p-3 bg-gray-50/70 border-b border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="relative flex-1 w-full">
+            <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400 text-sm">
+              🔍
+            </span>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="ค้นหารหัสนิสิต (เช่น 6916...) หรือ ชื่อ-นามสกุล..."
+              className="w-full pl-9 pr-8 py-2 text-xs bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none shadow-2xs"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm("")}
+                className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-xs text-gray-400 hover:text-gray-600"
+                title="ล้างข้อความค้นหา"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2.5 w-full sm:w-auto shrink-0 justify-between sm:justify-start">
+            {availableGroups.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-500 font-medium">กลุ่ม:</span>
+                <select
+                  value={groupFilter}
+                  onChange={(e) => setGroupFilter(e.target.value)}
+                  className="py-1.5 px-3 text-xs bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none shadow-2xs cursor-pointer"
+                >
+                  <option value="all">ทุกกลุ่มเรียน ({students?.length} คน)</option>
+                  {availableGroups.map((g) => (
+                    <option key={g} value={g}>
+                      กลุ่ม {g} ({students?.filter((s) => s.group_no === g).length} คน)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {(searchTerm || statusFilter !== "all" || groupFilter !== "all") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm("");
+                  setStatusFilter("all");
+                  setGroupFilter("all");
+                }}
+                className="text-xs text-indigo-700 hover:text-indigo-900 font-semibold whitespace-nowrap bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                ล้างตัวกรอง
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-gray-600">
             <thead className="bg-gray-50 text-xs uppercase text-gray-500 border-b border-gray-200">
@@ -508,14 +652,16 @@ export default function ExamGradingPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {students?.length === 0 ? (
+              {filteredStudents?.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-gray-400">
-                    ยังไม่มีนิสิตลงทะเบียนในวิชานี้
+                  <td colSpan={6} className="px-5 py-10 text-center text-gray-400">
+                    {students?.length === 0
+                      ? "ยังไม่มีนิสิตลงทะเบียนในวิชานี้"
+                      : `ไม่พบข้อมูลนิสิตที่ตรงกับเงื่อนไขค้นหา ${searchTerm ? `"${searchTerm}"` : ""}`}
                   </td>
                 </tr>
               ) : (
-                students?.map((s) => {
+                filteredStudents?.map((s) => {
                   const hasSub = !!s.submission_id;
                   const isGraded = s.status === "graded";
                   const isSubmitted = s.status === "submitted";

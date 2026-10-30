@@ -593,9 +593,6 @@ export default function StudentExamTakePage() {
           <span> จากทั้งหมด {questions?.length} ข้อ</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-medium">
-            🛡️ บันทึกบนเซิร์ฟเวอร์เรียลไทม์ (รองรับ Incognito)
-          </span>
           {exam?.allow_paste === 0 && (
             <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded font-medium">
               🚫 ไม่อนุญาตให้คัดลอก/วางโค้ด
@@ -604,16 +601,6 @@ export default function StudentExamTakePage() {
           {exam?.require_fullscreen === 1 && (
             <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded font-medium">
               🖥️ โหมดเต็มจอ
-            </span>
-          )}
-          {exam?.shuffle_questions === 1 && (
-            <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-medium">
-              🔀 สลับลำดับข้อ
-            </span>
-          )}
-          {exam?.shuffle_options === 1 && (
-            <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-medium">
-              🔀 สลับช้อยส์
             </span>
           )}
           <button

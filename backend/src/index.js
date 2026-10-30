@@ -36,10 +36,10 @@ app.disable("x-powered-by");
 // Enhanced Helmet headers
 app.use(helmet());
 
-// Global rate limiter to protect against DDoS or crawling (1,200 requests/min per IP)
+// Global rate limiter to protect against DDoS or crawling (10,000 requests/min per IP to support computer labs/NAT with 100+ concurrent students)
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 1200,
+  max: 10000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "คำขอมากเกินไป กรุณารอสักครู่แล้วลองใหม่" },
