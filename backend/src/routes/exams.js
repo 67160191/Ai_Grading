@@ -349,6 +349,8 @@ router.get("/exams/:id", authenticate, (req, res) => {
     }
   }
 
+  const totalPoints = questions.reduce((sum, q) => sum + (q.points || 0), 0);
+
   res.json({
     exam: {
       id: exam.id,
@@ -362,9 +364,11 @@ router.get("/exams/:id", authenticate, (req, res) => {
       require_fullscreen: exam.require_fullscreen ?? 0,
       shuffle_questions: exam.shuffle_questions ?? 0,
       shuffle_options: exam.shuffle_options ?? 0,
+      question_count: questions.length,
+      total_points: Math.round(totalPoints * 10) / 10,
     },
-    course: { id: course.id, name: course.name },
-    questions,
+    course: { id: course.id, name: course.name, code: course.code },
+    questions: submission ? questions : [],
     submission,
     remainingSeconds,
     existingAnswers,

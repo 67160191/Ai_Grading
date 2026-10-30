@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "../../context/ToastContext";
 import { getExam, startExam, submitExam, autosaveExam, runExamCode } from "../../api/exams";
 import CodeEditor from "../../components/CodeEditor";
@@ -10,6 +10,7 @@ export default function StudentExamTakePage() {
   const { examId } = useParams();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
 
   const [answers, setAnswers] = useState({}); // { [question_id]: answer_text }
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -69,6 +70,10 @@ export default function StudentExamTakePage() {
   // Start exam mutation
   const startMut = useMutation({
     mutationFn: () => startExam(examId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student-exam-take", examId] });
+      showToast("เริ่มทำข้อสอบแล้ว ขอให้โชคดีในการสอบ!", "success");
+    },
     onError: (err) => {
       showToast(err.response?.data?.error || "ไม่สามารถเริ่มสอบได้", "error");
     },
@@ -87,13 +92,18 @@ export default function StudentExamTakePage() {
     },
   });
 
-  // Initialize exam session
+  const hasStarted = Boolean(data?.submission && data.submission.status === "in_progress") || startMut.isSuccess;
+
+  // Initialize exam session when started
   useEffect(() => {
     if (data?.exam) {
-      if (!data.submission) {
-        startMut.mutate();
-      } else if (data.submission.status !== "in_progress") {
+      if (data.submission && data.submission.status !== "in_progress") {
         navigate(`/student/exams/${examId}/result`, { replace: true });
+        return;
+      }
+
+      if (!hasStarted) {
+        // Not started yet -> student will see the confirmation & readiness lobby
         return;
       }
 
@@ -104,13 +114,15 @@ export default function StudentExamTakePage() {
 
       // Initialize default answers
       const initial = {};
-      data.questions.forEach((q) => {
-        if (q.question_type === "coding" && q.starter_code) {
-          initial[q.id] = q.starter_code;
-        } else {
-          initial[q.id] = "";
-        }
-      });
+      if (data.questions) {
+        data.questions.forEach((q) => {
+          if (q.question_type === "coding" && q.starter_code) {
+            initial[q.id] = q.starter_code;
+          } else {
+            initial[q.id] = "";
+          }
+        });
+      }
 
       // Overlay server existing answers (Permanent cloud persistence for Incognito)
       if (data.existingAnswers) {
@@ -137,11 +149,11 @@ export default function StudentExamTakePage() {
         setRemainingSecs(data.exam.duration_minutes * 60);
       }
     }
-  }, [data]);
+  }, [data, hasStarted]);
 
   // Timer countdown
   useEffect(() => {
-    if (remainingSecs === null || remainingSecs <= 0) return;
+    if (!hasStarted || remainingSecs === null || remainingSecs <= 0) return;
 
     timerRef.current = setInterval(() => {
       setRemainingSecs((prev) => {
@@ -155,7 +167,7 @@ export default function StudentExamTakePage() {
     }, 1000);
 
     return () => clearInterval(timerRef.current);
-  }, [remainingSecs]);
+  }, [hasStarted, remainingSecs]);
 
   // Periodic Auto-Save (Every 25-35s with jitter, only if dirty)
   useEffect(() => {
@@ -258,6 +270,13 @@ export default function StudentExamTakePage() {
         showToast("เบราว์เซอร์ไม่อนุญาตให้เปิดโหมดเต็มจออัตโนมัติ: " + err.message, "error");
       });
     }
+  };
+
+  const handleConfirmStart = () => {
+    if (data?.exam?.require_fullscreen && !document.fullscreenElement) {
+      enterFullscreen();
+    }
+    startMut.mutate();
   };
 
   const handleAutoSubmit = () => {
@@ -384,6 +403,113 @@ export default function StudentExamTakePage() {
 
   const { exam, course, questions } = data || {};
   const answeredCount = Object.values(answers).filter((a) => a && a.trim().length > 0).length;
+
+  // Confirmation / Readiness Lobby Screen (Time does NOT count down until confirmed)
+  if (!hasStarted) {
+    const totalPts = exam?.total_points || questions?.reduce((sum, q) => sum + (q.points || 0), 0) || 0;
+    const qCount = exam?.question_count || questions?.length || 0;
+
+    return (
+      <div className="max-w-2xl mx-auto py-8 px-4 space-y-6">
+        {/* Main Card */}
+        <div className="bg-white rounded-3xl border border-gray-200 p-6 sm:p-8 shadow-sm text-center space-y-4">
+          <div className="w-20 h-20 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-3xl flex items-center justify-center text-4xl mx-auto shadow-xs">
+            📝
+          </div>
+          <div>
+            <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wider bg-indigo-50 px-3 py-1 rounded-full">
+              {course?.name}
+            </span>
+            <h1 className="text-2xl font-extrabold text-gray-900 mt-3">
+              {exam?.title}
+            </h1>
+            {exam?.description && (
+              <p className="text-sm text-gray-500 mt-2 max-w-lg mx-auto">
+                {exam.description}
+              </p>
+            )}
+          </div>
+
+          {/* Info Pills */}
+          <div className="grid grid-cols-3 gap-3 pt-4 border-t border-gray-100">
+            <div className="bg-gray-50 rounded-2xl p-3 border border-gray-100">
+              <p className="text-xs text-gray-500">⏱️ เวลาในการทำ</p>
+              <p className="text-lg font-bold text-gray-900 mt-0.5">
+                {exam?.duration_minutes} นาที
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-2xl p-3 border border-gray-100">
+              <p className="text-xs text-gray-500">📑 จำนวนข้อ</p>
+              <p className="text-lg font-bold text-gray-900 mt-0.5">
+                {qCount} ข้อ
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-2xl p-3 border border-gray-100">
+              <p className="text-xs text-gray-500">🎯 คะแนนเต็ม</p>
+              <p className="text-lg font-bold text-indigo-600 mt-0.5">
+                {totalPts} คะแนน
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Notice & Rules Box */}
+        <div className="bg-amber-50/90 border-2 border-amber-200 rounded-3xl p-6 space-y-3 shadow-xs">
+          <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
+            <span className="text-xl">⚠️</span>
+            <span>ข้อตกลงและคำชี้แจงก่อนเริ่มสอบ</span>
+          </div>
+          <ul className="text-xs text-amber-800 space-y-2.5 list-disc list-inside leading-relaxed">
+            <li>
+              <strong>เวลานับถอยหลังจะเริ่มทันที</strong> หลังจากที่คุณคลิกปุ่ม <em>"ยืนยันและเริ่มทำข้อสอบ"</em> ด้านล่าง และ<strong>ไม่สามารถหยุดเวลาชั่วคราวได้</strong>
+            </li>
+            <li>
+              ระบบมีฟังก์ชัน <strong>Auto-Save อัตโนมัติ</strong> ทุกครั้งที่พิมพ์หรือเลือกคำตอบ คำตอบจะไม่สูญหาย
+            </li>
+            <li>
+              รองรับการใช้งานในโหมด <strong>Incognito (ไม่ระบุตัวตน)</strong> ได้อย่างปลอดภัย
+            </li>
+            <li>
+              หากสัญญาณอินเทอร์เน็ตขาดหายชั่วคราว คำตอบจะถูกบันทึกสำรองในเครื่องไว้ตลอดเวลา
+            </li>
+            <li>
+              กรุณาตรวจสอบความพร้อมของอุปกรณ์ แบตเตอรี่ และสัญญาณอินเทอร์เน็ตของท่านก่อนเริ่มสอบ
+            </li>
+          </ul>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={() => navigate(`/student/courses/${exam?.course_id}`)}
+            className="w-full sm:w-auto px-6 py-3.5 rounded-2xl border border-gray-300 text-gray-700 font-bold text-sm hover:bg-gray-100 transition-colors cursor-pointer text-center"
+          >
+            ← ยังไม่พร้อม (กลับไปหน้ารายวิชา)
+          </button>
+
+          <button
+            type="button"
+            disabled={startMut.isPending}
+            onClick={handleConfirmStart}
+            className="w-full sm:flex-1 px-8 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-sm shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            {startMut.isPending ? (
+              <>
+                <span className="inline-block animate-spin">⏳</span>
+                <span>กำลังเตรียมข้อสอบ...</span>
+              </>
+            ) : (
+              <>
+                <span>🚀</span>
+                <span>ยืนยันและเริ่มทำข้อสอบทันที (เริ่มจับเวลา)</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-24">
