@@ -415,11 +415,10 @@ export default function ExamGradingPage() {
             <button
               onClick={() => publishMut.mutate(!exam?.is_published)}
               disabled={publishMut.isPending}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                exam?.is_published
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${exam?.is_published
                   ? "bg-green-600 text-white hover:bg-green-700"
                   : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-              }`}
+                }`}
             >
               {exam?.is_published ? "✓ ประกาศคะแนนแล้ว" : "📢 ประกาศผลคะแนน"}
             </button>
@@ -503,55 +502,50 @@ export default function ExamGradingPage() {
               <button
                 type="button"
                 onClick={() => setStatusFilter("all")}
-                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                  statusFilter === "all"
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${statusFilter === "all"
                     ? "bg-gray-800 text-white shadow-xs font-bold ring-2 ring-gray-400"
                     : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                }`}
+                  }`}
               >
                 ทั้งหมด {students?.length || 0} คน
               </button>
               <button
                 type="button"
                 onClick={() => setStatusFilter("in_progress")}
-                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                  statusFilter === "in_progress"
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${statusFilter === "in_progress"
                     ? "bg-blue-600 text-white shadow-xs font-bold ring-2 ring-blue-300"
                     : "bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
-                }`}
+                  }`}
               >
                 ⚡ กำลังทำ {students?.filter((s) => s.status === "in_progress").length || 0} คน
               </button>
               <button
                 type="button"
                 onClick={() => setStatusFilter("submitted")}
-                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                  statusFilter === "submitted"
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${statusFilter === "submitted"
                     ? "bg-amber-600 text-white shadow-xs font-bold ring-2 ring-amber-300"
                     : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
-                }`}
+                  }`}
               >
                 ส่งแล้ว {students?.filter((s) => s.status === "submitted").length || 0} คน
               </button>
               <button
                 type="button"
                 onClick={() => setStatusFilter("graded")}
-                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                  statusFilter === "graded"
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${statusFilter === "graded"
                     ? "bg-green-700 text-white shadow-xs font-bold ring-2 ring-green-400"
                     : "bg-green-50 text-green-700 border border-green-200 hover:bg-green-100"
-                }`}
+                  }`}
               >
                 ✓ ตรวจแล้ว {students?.filter((s) => s.status === "graded").length || 0} คน
               </button>
               <button
                 type="button"
                 onClick={() => setStatusFilter("not_started")}
-                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                  statusFilter === "not_started"
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${statusFilter === "not_started"
                     ? "bg-gray-600 text-white shadow-xs font-bold ring-2 ring-gray-400"
                     : "bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100"
-                }`}
+                  }`}
               >
                 ยังไม่เข้า {students?.filter((s) => !s.submission_id).length || 0} คน
               </button>
@@ -885,9 +879,8 @@ export default function ExamGradingPage() {
                                   {(tcResultsMap[q.id] || JSON.parse(q.test_case_results || "[]")).map((tc, tIdx) => (
                                     <div
                                       key={tIdx}
-                                      className={`p-2 rounded flex items-center justify-between text-[11px] font-mono ${
-                                        tc.passed ? "bg-slate-800/80 border border-emerald-500/30" : "bg-slate-800/80 border border-rose-500/30"
-                                      }`}
+                                      className={`p-2 rounded flex items-center justify-between text-[11px] font-mono ${tc.passed ? "bg-slate-800/80 border border-emerald-500/30" : "bg-slate-800/80 border border-rose-500/30"
+                                        }`}
                                     >
                                       <div>
                                         <span className="font-semibold text-slate-200">{tc.name || `Case ${tIdx + 1}`}</span>
@@ -900,9 +893,8 @@ export default function ExamGradingPage() {
                                           <span className="text-slate-400">{tc.execution_time_ms}ms</span>
                                         )}
                                         <span
-                                          className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
-                                            tc.passed ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
-                                          }`}
+                                          className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${tc.passed ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+                                            }`}
                                         >
                                           {tc.passed ? "PASS" : "FAIL"}
                                         </span>
@@ -1099,9 +1091,8 @@ export default function ExamGradingPage() {
                           return (
                             <tr
                               key={idx}
-                              className={`hover:bg-indigo-50/50 cursor-pointer transition-colors ${
-                                isSelected ? "bg-indigo-50 font-medium" : ""
-                              }`}
+                              className={`hover:bg-indigo-50/50 cursor-pointer transition-colors ${isSelected ? "bg-indigo-50 font-medium" : ""
+                                }`}
                               onClick={() => setSelectedPair(p)}
                             >
                               <td className="px-4 py-3 font-semibold text-gray-800">
@@ -1115,13 +1106,12 @@ export default function ExamGradingPage() {
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <span
-                                  className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold ${
-                                    isHigh
+                                  className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold ${isHigh
                                       ? "bg-rose-100 text-rose-700 border border-rose-200 animate-pulse"
                                       : isMed
-                                      ? "bg-amber-100 text-amber-700 border border-amber-200"
-                                      : "bg-sky-100 text-sky-700 border border-sky-200"
-                                  }`}
+                                        ? "bg-amber-100 text-amber-700 border border-amber-200"
+                                        : "bg-sky-100 text-sky-700 border border-sky-200"
+                                    }`}
                                 >
                                   {p.similarity}% {isHigh ? "🔥 เสี่ยงสูงมาก" : isMed ? "⚠️ ปานกลาง" : "คล้ายบางส่วน"}
                                 </span>

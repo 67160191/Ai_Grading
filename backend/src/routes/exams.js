@@ -300,16 +300,16 @@ router.get("/exams/:id", authenticate, (req, res) => {
       const studentTestCases = showAnswers
         ? tcs
         : tcs.map((tc) =>
-            tc.is_hidden
-              ? {
-                  id: tc.id,
-                  name: tc.name || `Case ${tc.id}`,
-                  is_hidden: true,
-                  input: "(Hidden Test Case)",
-                  expected_output: "(Hidden Test Case)",
-                }
-              : tc,
-          );
+          tc.is_hidden
+            ? {
+              id: tc.id,
+              name: tc.name || `Case ${tc.id}`,
+              is_hidden: true,
+              input: "(Hidden Test Case)",
+              expected_output: "(Hidden Test Case)",
+            }
+            : tc,
+        );
 
       return {
         id: q.id,
@@ -720,7 +720,7 @@ router.post("/exams/:id/submit", authenticate, requireRole("student"), (req, res
           : "";
 
         const isMatch = (correctOptId && rawAns === correctOptId) ||
-                        (correctOptText && rawAns === correctOptText);
+          (correctOptText && rawAns === correctOptText);
 
         if (isMatch) {
           autoScore = q.points;
@@ -828,9 +828,9 @@ router.get("/exams/:id/submissions", authenticate, requireRole("teacher", "admin
     avg_score:
       students.filter((s) => s.score != null).length > 0
         ? (
-            students.reduce((acc, s) => acc + (s.score || 0), 0) /
-            students.filter((s) => s.score != null).length
-          ).toFixed(1)
+          students.reduce((acc, s) => acc + (s.score || 0), 0) /
+          students.filter((s) => s.score != null).length
+        ).toFixed(1)
         : null,
   };
 
@@ -893,7 +893,7 @@ router.post("/exams/:id/submissions/:submissionId/force-submit", authenticate, r
 
         const rawAns = String(ans.student_answer || "").trim();
         const isMatch = (correctOptId && rawAns === correctOptId) ||
-                        (correctOptText && rawAns === correctOptText);
+          (correctOptText && rawAns === correctOptText);
 
         const autoScore = isMatch ? q.points : 0;
         const manualScore = isMatch ? q.points : 0;
