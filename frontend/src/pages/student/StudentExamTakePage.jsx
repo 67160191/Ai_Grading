@@ -11,8 +11,6 @@ export default function StudentExamTakePage() {
   const { showToast } = useToast();
 
   const [answers, setAnswers] = useState({}); // { [question_id]: answer_text }
-  const [tabSwitchCount, setTabSwitchCount] = useState(0);
-  const [showSwitchWarning, setShowSwitchWarning] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [remainingSecs, setRemainingSecs] = useState(null);
   const [lastSavedAt, setLastSavedAt] = useState(null);
@@ -28,7 +26,7 @@ export default function StudentExamTakePage() {
 
   const timerRef = useRef(null);
   const autoSaveTimerRef = useRef(null);
-  const switchEventsRef = useRef([]);
+  const isDirtyRef = useRef(false);
 
   const storageKey = `exam_draft_${examId}`;
 
@@ -67,11 +65,6 @@ export default function StudentExamTakePage() {
       } else if (data.submission.status !== "in_progress") {
         navigate(`/student/exams/${examId}/result`, { replace: true });
         return;
-      }
-
-      // Restore switch count if exists
-      if (data.submission?.tab_switch_count) {
-        setTabSwitchCount(data.submission.tab_switch_count);
       }
 
       // Check Fullscreen requirement
@@ -133,16 +126,18 @@ export default function StudentExamTakePage() {
     return () => clearInterval(timerRef.current);
   }, [remainingSecs]);
 
-  // Periodic Auto-Save (Every 20 seconds)
+  // Periodic Auto-Save (Every 25-35s with jitter, only if dirty)
   useEffect(() => {
     if (!data?.exam || data?.submission?.status !== "in_progress") return;
 
+    // Random jitter between 25-35s to prevent synchronized request spikes from 100+ students
+    const intervalMs = 25000 + Math.floor(Math.random() * 10000);
     autoSaveTimerRef.current = setInterval(() => {
-      runAutoSave();
-    }, 20000);
+      runAutoSave(false);
+    }, intervalMs);
 
     return () => clearInterval(autoSaveTimerRef.current);
-  }, [data, answers, tabSwitchCount]);
+  }, [data, answers]);
 
   // Save to localStorage whenever answers change
   useEffect(() => {
@@ -155,7 +150,8 @@ export default function StudentExamTakePage() {
     }
   }, [answers]);
 
-  const runAutoSave = async () => {
+  const runAutoSave = async (force = false) => {
+    if (!force && !isDirtyRef.current) return;
     if (submitMut.isPending || Object.keys(answers).length === 0) return;
     try {
       setIsSaving(true);
@@ -165,9 +161,8 @@ export default function StudentExamTakePage() {
       }));
       await autosaveExam(examId, {
         answers: formatted,
-        tab_switch_count: tabSwitchCount,
-        switch_events: switchEventsRef.current,
       });
+      isDirtyRef.current = false;
       setLastSavedAt(new Date().toLocaleTimeString("th-TH"));
     } catch (err) {
       console.warn("Auto-save warning:", err);
@@ -176,46 +171,16 @@ export default function StudentExamTakePage() {
     }
   };
 
-  // Anti-Cheat: Tab-switch & Window blur listener
-  useEffect(() => {
-    const handleBlur = () => {
-      const ev = { time: new Date().toISOString(), type: "blur" };
-      switchEventsRef.current.push(ev);
-      setTabSwitchCount((c) => {
-        const next = c + 1;
-        setShowSwitchWarning(true);
-        return next;
-      });
-    };
-
-    window.addEventListener("blur", handleBlur);
-    const handleVisChange = () => {
-      if (document.hidden) handleBlur();
-    };
-    document.addEventListener("visibilitychange", handleVisChange);
-
-    return () => {
-      window.removeEventListener("blur", handleBlur);
-      document.removeEventListener("visibilitychange", handleVisChange);
-    };
-  }, []);
-
-  // Anti-Cheat: Fullscreen Change Listener
+  // Fullscreen Change Listener
   useEffect(() => {
     const handleFsChange = () => {
       const inFs = !!document.fullscreenElement;
       setIsFullscreen(inFs);
-      if (!inFs && data?.exam?.require_fullscreen) {
-        const ev = { time: new Date().toISOString(), type: "fullscreen_exit" };
-        switchEventsRef.current.push(ev);
-        setTabSwitchCount((c) => c + 1);
-        setShowSwitchWarning(true);
-      }
     };
 
     document.addEventListener("fullscreenchange", handleFsChange);
     return () => document.removeEventListener("fullscreenchange", handleFsChange);
-  }, [data]);
+  }, []);
 
   const enterFullscreen = () => {
     if (document.documentElement.requestFullscreen) {
@@ -234,6 +199,7 @@ export default function StudentExamTakePage() {
   };
 
   const handleAnswerChange = (qId, val) => {
+    isDirtyRef.current = true;
     setAnswers((prev) => ({ ...prev, [qId]: val }));
   };
 
@@ -295,8 +261,6 @@ export default function StudentExamTakePage() {
     }));
     submitMut.mutate({
       answers: formatted,
-      tab_switch_count: tabSwitchCount,
-      switch_events: switchEventsRef.current,
     });
   };
 
@@ -343,7 +307,7 @@ export default function StudentExamTakePage() {
               ข้อสอบนี้กำหนดให้ทำในโหมดเต็มจอ
             </h3>
             <p className="text-sm text-gray-600">
-              เพื่อความโปร่งใส ระบบจะตรวจสอบว่าคุณอยู่ในโหมดเต็มจอตลอดเวลาการสอบ หากออกจากโหมดเต็มจอจะถูกบันทึกเป็นการสลับหน้าต่าง
+              กรุณาเข้าสู่โหมดเต็มจอก่อนเริ่มทำข้อสอบ
             </p>
             <button
               onClick={enterFullscreen}
@@ -399,27 +363,6 @@ export default function StudentExamTakePage() {
           </button>
         </div>
       </div>
-
-      {/* Tab Switch Alert Banner */}
-      {showSwitchWarning && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start justify-between gap-3 text-amber-800 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-base">⚠️</span>
-            <div>
-              <p className="font-bold">ระบบตรวจพบการสลับหน้าต่าง/แท็บ ({tabSwitchCount} ครั้ง)</p>
-              <p className="text-amber-700 mt-0.5">
-                ประวัติการสลับหน้าต่างจะถูกบันทึกและส่งรายงานไปยังอาจารย์ผู้สอน กรุณาทำข้อสอบในหน้านี้
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => setShowSwitchWarning(false)}
-            className="text-amber-600 hover:text-amber-800 font-bold px-2 py-1"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Progress & Info Card */}
       <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-gray-500">
@@ -797,7 +740,7 @@ export default function StudentExamTakePage() {
         <div className="flex items-center gap-3 w-full sm:w-auto">
           <button
             type="button"
-            onClick={runAutoSave}
+            onClick={() => runAutoSave(true)}
             disabled={isSaving}
             className="flex-1 sm:flex-none px-4 py-2.5 border border-gray-300 text-gray-700 text-sm font-medium rounded-xl hover:bg-gray-50"
           >
@@ -825,11 +768,6 @@ export default function StudentExamTakePage() {
               {answeredCount < (questions?.length || 0) && (
                 <p className="text-rose-600 font-semibold">
                   ⚠️ ยังมีข้อที่ยังไม่ได้ตอบอีก {(questions?.length || 0) - answeredCount} ข้อ
-                </p>
-              )}
-              {tabSwitchCount > 0 && (
-                <p className="text-amber-700">
-                  • จำนวนการสลับหน้าต่าง: <span className="font-bold">{tabSwitchCount} ครั้ง</span>
                 </p>
               )}
             </div>

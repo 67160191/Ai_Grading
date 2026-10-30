@@ -471,6 +471,22 @@ router.put("/exams/:id", authenticate, requireRole("teacher", "admin"), (req, re
   res.json({ message: "อัปเดตห้องสอบเรียบร้อยแล้ว" });
 });
 
+// DELETE /api/exam-submissions/:submissionId - Teacher or Admin resets/deletes student submission
+router.delete("/exam-submissions/:submissionId", authenticate, requireRole("teacher", "admin"), (req, res) => {
+  const { submissionId } = req.params;
+  const sub = db.prepare("SELECT * FROM exam_submissions WHERE id = ?").get(submissionId);
+  if (!sub) return res.status(404).json({ error: "ไม่พบการส่งข้อสอบนี้" });
+
+  const exam = db.prepare("SELECT * FROM exams WHERE id = ?").get(sub.exam_id);
+  const course = db.prepare("SELECT * FROM courses WHERE id = ?").get(exam.course_id);
+  if (req.user.role === "teacher" && course.teacher_id !== req.user.id) {
+    return res.status(403).json({ error: "คุณไม่มีสิทธิ์จัดการข้อสอบนี้" });
+  }
+
+  db.prepare("DELETE FROM exam_submissions WHERE id = ?").run(submissionId);
+  res.json({ message: "ลบผลการส่งข้อสอบและรีเซ็ตให้นิสิตทำใหม่เรียบร้อยแล้ว" });
+});
+
 // DELETE /api/exams/:id
 router.delete("/exams/:id", authenticate, requireRole("teacher", "admin"), (req, res) => {
   const { id } = req.params;
@@ -1076,20 +1092,57 @@ router.put(
   },
 );
 
-// AI evaluation helper for Java code / programming questions
-export async function evaluateQuestionWithAI(teacherId, q, studentCode) {
-  const code = (studentCode || "").trim();
-  if (!code || code === "(ไม่ได้เขียนคำตอบ)") {
+// AI evaluation helper for Java code / programming questions & short answer explanations
+export async function evaluateQuestionWithAI(teacherId, q, studentInput) {
+  const text = (studentInput || "").trim();
+  if (!text || text === "(ไม่ได้เขียนคำตอบ)") {
     return {
       suggested_score: 0,
       compilation_status: "No Answer",
-      feedback: "ไม่ได้ส่งคำตอบหรือโค้ดว่างเปล่า",
+      feedback: "ไม่ได้ส่งคำตอบหรือข้อความว่างเปล่า",
     };
   }
 
   const settings = getGradingSettings(teacherId);
+  const isShortAnswer = q.question_type === "short_answer";
 
-  const prompt = `You are evaluating a university student's Java exam submission.
+  let prompt = "";
+  if (isShortAnswer) {
+    prompt = `You are an expert university professor evaluating a student's SHORT ANSWER (ข้อเขียนบรรยาย / ตอบสั้น) exam response.
+
+Question Prompt:
+"""
+${q.prompt}
+"""
+
+Maximum Points: ${q.points}
+${q.solution_guide ? `Teacher's Solution Guide / Expected Key Concepts:\n"""\n${q.solution_guide}\n"""` : ""}
+
+Student's Written Answer:
+"""
+${text}
+"""
+
+CRITICAL EVALUATION RULES FOR SHORT ANSWER:
+1. SEMANTIC & CONCEPTUAL UNDERSTANDING OVER VERBATIM MATCHING:
+   - Students do NOT need to match the Solution Guide word-for-word.
+   - Reward creative explanations, alternative analogies, and valid examples in the student's own words as long as the underlying computer science concept and reasoning are sound.
+   - If the student clearly understands and conveys the core principles required by the question, award FULL POINTS (${q.points} / ${q.points}).
+2. PARTIAL CREDIT:
+   - If the student explains some required key concepts correctly but misses others, award appropriate partial credit between 0 and ${q.points}.
+3. NO PENALTY FOR WRITING STYLE:
+   - Do NOT deduct points for grammar, slang, tone, or informal language if the technical meaning is clear and correct.
+   - Only deduct points for factually incorrect statements, misconceptions, or omitted core ideas.
+
+Provide an assessment and score in this EXACT JSON format:
+{
+  "suggested_score": <number between 0 and ${q.points}>,
+  "compilation_status": "Conceptual Evaluation",
+  "feedback": "<Clear concise explanation in THAI language stating whether the conceptual understanding is correct, which key points were well-explained, and what is missing or incorrect if any. 1-3 sentences>"
+}
+Reply with ONLY the JSON object, no markdown code block fences.`;
+  } else {
+    prompt = `You are evaluating a university student's Java exam submission.
 Your ONLY criterion is FUNCTIONAL CORRECTNESS of the code.
 
 Question Prompt:
@@ -1102,7 +1155,7 @@ ${q.solution_guide ? `Grading Guide / Expected Solution:\n"""\n${q.solution_guid
 
 Student's Submitted Java Code:
 """java
-${code}
+${text}
 """
 
 CRITICAL EVALUATION RULES:
@@ -1125,6 +1178,7 @@ Provide an assessment and score in this EXACT JSON format:
   "feedback": "<Clear concise explanation in THAI language stating whether the logic/output is correct, and specifically what logic/requirement is missing or broken if any. Do NOT comment on or deduct for code style or beauty. 1-3 sentences>"
 }
 Reply with ONLY the JSON object, no markdown code block fences.`;
+  }
 
   try {
     const aiRes = await fetch(`${settings.url}/api/generate`, {

@@ -4,6 +4,27 @@ import path from "path";
 import os from "os";
 import { randomBytes } from "crypto";
 
+const MAX_CONCURRENT_RUNS = 8;
+let runningCount = 0;
+const waitingQueue = [];
+
+function acquireSlot() {
+  if (runningCount < MAX_CONCURRENT_RUNS) {
+    runningCount++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => waitingQueue.push(resolve));
+}
+
+function releaseSlot() {
+  runningCount--;
+  if (waitingQueue.length > 0) {
+    runningCount++;
+    const next = waitingQueue.shift();
+    next();
+  }
+}
+
 /**
  * Execute code with input in an isolated temporary directory with timeout.
  * Supported languages: 'java', 'python', 'python3', 'javascript', 'node'
@@ -15,6 +36,7 @@ export async function executeCode({
   driverCode = null,
   timeoutMs = 4000,
 }) {
+  await acquireSlot();
   const lang = (language || "java").toLowerCase();
   const runId = randomBytes(8).toString("hex");
   const tempDir = path.join(os.tmpdir(), `coderunner_${runId}`);
@@ -44,6 +66,7 @@ export async function executeCode({
     } catch {
       // Ignore cleanup error
     }
+    releaseSlot();
   }
 }
 

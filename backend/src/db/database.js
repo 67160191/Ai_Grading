@@ -20,6 +20,7 @@ const db = new Database(join(__dirname, "../../data/app.db"));
 // Enable WAL mode for better performance
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+db.pragma("busy_timeout = 10000");
 
 // Initialize schema
 const schema = readFileSync(join(__dirname, "schema.sql"), "utf-8");

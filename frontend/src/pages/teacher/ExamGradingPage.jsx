@@ -439,7 +439,6 @@ export default function ExamGradingPage() {
                 <th className="px-5 py-3">รหัสนิสิต</th>
                 <th className="px-5 py-3">ชื่อ-นามสกุล</th>
                 <th className="px-5 py-3">สถานะ</th>
-                <th className="px-5 py-3">สลับแท็บ / ความปลอดภัย</th>
                 <th className="px-5 py-3">คะแนน</th>
                 <th className="px-5 py-3 text-right">การจัดการ</th>
               </tr>
@@ -447,7 +446,7 @@ export default function ExamGradingPage() {
             <tbody className="divide-y divide-gray-100">
               {students?.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-8 text-center text-gray-400">
+                  <td colSpan={6} className="px-5 py-8 text-center text-gray-400">
                     ยังไม่มีนิสิตลงทะเบียนในวิชานี้
                   </td>
                 </tr>
@@ -483,24 +482,6 @@ export default function ExamGradingPage() {
                             ✓ ตรวจแล้ว
                           </span>
                         ) : null}
-                      </td>
-                      <td className="px-5 py-3">
-                        {hasSub ? (
-                          <div className="space-y-0.5">
-                            {s.tab_switch_count > 0 ? (
-                              <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-200 text-xs px-2 py-0.5 rounded-md font-medium">
-                                ⚠️ สลับแท็บ {s.tab_switch_count} ครั้ง
-                              </span>
-                            ) : (
-                              <span className="text-xs text-emerald-600 font-medium">✓ ปกติ (0 ครั้ง)</span>
-                            )}
-                            {s.ip_address && (
-                              <p className="text-[10px] text-gray-400 font-mono">IP: {s.ip_address}</p>
-                            )}
-                          </div>
-                        ) : (
-                          "-"
-                        )}
                       </td>
                       <td className="px-5 py-3 font-semibold">
                         {s.score != null ? (
@@ -567,22 +548,6 @@ export default function ExamGradingPage() {
                 }
               }}
             >
-              {/* Anti-cheat banner inside modal */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <span>🌐</span>
-                  <span>IP Address: </span>
-                  <strong className="font-mono">{subDetailData?.submission?.ip_address || "ไม่ระบุ"}</strong>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span>🖥️</span>
-                  <span>สลับหน้าจอ/แท็บ: </span>
-                  <strong className={subDetailData?.submission?.tab_switch_count > 0 ? "text-rose-600" : "text-emerald-600"}>
-                    {subDetailData?.submission?.tab_switch_count || 0} ครั้ง
-                  </strong>
-                </div>
-              </div>
-
               {subDetailLoading ? (
                 <p className="text-center py-10 text-gray-400">กำลังโหลดคำตอบ...</p>
               ) : (
