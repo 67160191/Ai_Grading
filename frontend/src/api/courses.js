@@ -31,6 +31,9 @@ export const removeStudent = (courseId, studentId) =>
 export const removeAllStudents = (courseId) =>
   api.delete(`/courses/${courseId}/students`).then(r => r.data)
 
+export const enrollAllStudents = (courseId) =>
+  api.post(`/courses/${courseId}/enroll-all`).then(r => r.data)
+
 export const updateStudentGroup = (courseId, studentId, group_no) =>
   api.put(`/courses/${courseId}/students/${studentId}`, { group_no }).then(r => r.data)
 

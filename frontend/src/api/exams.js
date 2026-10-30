@@ -114,4 +114,9 @@ export async function batchTestCaseGrade(id) {
   return res.data;
 }
 
+export async function forceSubmitExam(examId, submissionId) {
+  const res = await api.post(`/exams/${examId}/submissions/${submissionId}/force-submit`);
+  return res.data;
+}
+
 

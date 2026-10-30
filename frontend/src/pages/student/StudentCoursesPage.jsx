@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCourses, enrollCourse } from '../../api/courses'
+import safeStorage from '../../utils/storage'
 
 const CARD_STYLES = {
   indigo:  { card: 'bg-indigo-50  border-indigo-200  hover:border-indigo-400',  link: 'text-indigo-600' },
@@ -22,11 +23,11 @@ export default function StudentCoursesPage() {
   const [error, setError] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const [showModal, setShowModal] = useState(false)
-  const [semesterFilter, setSemesterFilter] = useState(() => localStorage.getItem('student_semester_filter') || 'all')
+  const [semesterFilter, setSemesterFilter] = useState(() => safeStorage.getItem('student_semester_filter') || 'all')
 
   const setSemester = (s) => {
     setSemesterFilter(s)
-    localStorage.setItem('student_semester_filter', s)
+    safeStorage.setItem('student_semester_filter', s)
   }
 
   const { data, isLoading } = useQuery({

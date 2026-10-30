@@ -13,6 +13,7 @@ import {
   importStudents,
   removeStudent,
   removeAllStudents,
+  enrollAllStudents,
   exportStudents,
   exportGrades,
   resetStudentPassword,
@@ -493,6 +494,21 @@ export default function CourseDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["students", courseId] }),
     onError: (err) => showToast(err.response?.data?.error || "ลบไม่สำเร็จ"),
   });
+
+  const enrollAllMutation = useMutation({
+    mutationFn: () => enrollAllStudents(courseId),
+    onSuccess: (data) => {
+      showToast(data.message || "ดึงนิสิตทั้งหมดเข้าวิชาเรียบร้อยแล้ว", "success");
+      qc.invalidateQueries({ queryKey: ["students", courseId] });
+    },
+    onError: (err) => showToast(err.response?.data?.error || "เกิดข้อผิดพลาดในการดึงนิสิต", "error"),
+  });
+
+  const handleEnrollAll = () => {
+    if (confirm("ยืนยันการดึงนิสิตทั้งหมดที่มีในระบบเข้าสู่รายวิชานี้ทันที?")) {
+      enrollAllMutation.mutate();
+    }
+  };
 
   const handleRemoveAll = () => {
     const count = studentsData?.students?.length || 0;
@@ -2353,6 +2369,14 @@ export default function CourseDetailPage() {
                 className="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 transition-colors"
               >
                 + Import นิสิต
+              </button>
+              <button
+                onClick={handleEnrollAll}
+                disabled={enrollAllMutation.isPending}
+                className="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-1 font-medium shadow-sm disabled:opacity-50"
+                title="ดึงนิสิตทั้งหมด 106 คนในระบบเข้าวิชานี้ทันที"
+              >
+                👥 ดึงนิสิตทั้งหมดเข้าวิชา ({enrollAllMutation.isPending ? "กำลังดึง..." : "1 คลิก"})
               </button>
               {studentsData?.students?.length > 0 && (
                 <button

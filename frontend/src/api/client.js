@@ -1,10 +1,11 @@
 import axios from 'axios'
+import safeStorage from '../utils/storage'
 
 const api = axios.create({ baseURL: '/api' })
 
 // ใส่ token อัตโนมัติทุก request
 api.interceptors.request.use(config => {
-  const token = localStorage.getItem('token')
+  const token = safeStorage.getItem('token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -14,8 +15,8 @@ api.interceptors.response.use(
   res => res,
   err => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
+      safeStorage.removeItem('token')
+      safeStorage.removeItem('user')
       window.location.href = '/login'
     }
     return Promise.reject(err)

@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "../../context/ToastContext";
 import { getExam, startExam, submitExam, autosaveExam, runExamCode } from "../../api/exams";
 import CodeEditor from "../../components/CodeEditor";
+import safeStorage from "../../utils/storage";
 
 export default function StudentExamTakePage() {
   const { examId } = useParams();
@@ -26,9 +27,38 @@ export default function StudentExamTakePage() {
 
   const timerRef = useRef(null);
   const autoSaveTimerRef = useRef(null);
+  const debounceTimerRef = useRef(null);
   const isDirtyRef = useRef(false);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
 
   const storageKey = `exam_draft_${examId}`;
+
+  // Network Online / Offline Detection
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      showToast("กลับมาเชื่อมต่ออินเทอร์เน็ตแล้ว ระบบกำลังบันทึกร่าง...", "success");
+      runAutoSave(true);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      showToast("อินเทอร์เน็ตขาดการเชื่อมต่อ คำตอบยังถูกเซฟไว้ในเครื่อง", "warning");
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  const scrollToQuestion = (questionId) => {
+    const el = document.getElementById(`question-${questionId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["student-exam-take", examId],
@@ -48,7 +78,7 @@ export default function StudentExamTakePage() {
   const submitMut = useMutation({
     mutationFn: (payload) => submitExam(examId, payload),
     onSuccess: () => {
-      localStorage.removeItem(storageKey);
+      safeStorage.removeItem(storageKey);
       showToast("ส่งข้อสอบเรียบร้อยแล้ว", "success");
       navigate(`/student/exams/${examId}/result`, { replace: true });
     },
@@ -82,14 +112,14 @@ export default function StudentExamTakePage() {
         }
       });
 
-      // Overlay server existing answers
+      // Overlay server existing answers (Permanent cloud persistence for Incognito)
       if (data.existingAnswers) {
         Object.assign(initial, data.existingAnswers);
       }
 
-      // Overlay localStorage draft if exists
+      // Overlay local draft if exists in current session
       try {
-        const local = localStorage.getItem(storageKey);
+        const local = safeStorage.getItem(storageKey);
         if (local) {
           const parsed = JSON.parse(local);
           Object.assign(initial, parsed);
@@ -99,6 +129,7 @@ export default function StudentExamTakePage() {
       }
 
       setAnswers((prev) => ({ ...initial, ...prev }));
+      safeStorage.setItem(storageKey, JSON.stringify(initial));
 
       if (data.remainingSeconds != null) {
         setRemainingSecs(data.remainingSeconds);
@@ -139,23 +170,23 @@ export default function StudentExamTakePage() {
     return () => clearInterval(autoSaveTimerRef.current);
   }, [data, answers]);
 
-  // Save to localStorage whenever answers change
+  // Save to safeStorage whenever answers change
   useEffect(() => {
     if (Object.keys(answers).length > 0) {
       try {
-        localStorage.setItem(storageKey, JSON.stringify(answers));
+        safeStorage.setItem(storageKey, JSON.stringify(answers));
       } catch {
         // ignore
       }
     }
   }, [answers]);
 
-  const runAutoSave = async (force = false) => {
+  const runAutoSave = async (force = false, currentAnswers = answers) => {
     if (!force && !isDirtyRef.current) return;
-    if (submitMut.isPending || Object.keys(answers).length === 0) return;
+    if (submitMut.isPending || Object.keys(currentAnswers).length === 0) return;
     try {
       setIsSaving(true);
-      const formatted = Object.entries(answers).map(([qId, ans]) => ({
+      const formatted = Object.entries(currentAnswers).map(([qId, ans]) => ({
         question_id: parseInt(qId),
         answer: ans,
       }));
@@ -170,6 +201,42 @@ export default function StudentExamTakePage() {
       setIsSaving(false);
     }
   };
+
+  // Emergency Guard: Warn before closing tab or navigating away + keepalive server backup
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (submitMut.isPending || data?.submission?.status !== "in_progress") return;
+
+      // If there are unsaved changes, send keepalive request to backend before page closes
+      if (isDirtyRef.current) {
+        try {
+          const token = safeStorage.getItem("token");
+          const formatted = Object.entries(answers).map(([qId, ans]) => ({
+            question_id: parseInt(qId),
+            answer: ans,
+          }));
+          fetch(`/api/exams/${examId}/autosave`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: token ? `Bearer ${token}` : "",
+            },
+            body: JSON.stringify({ answers: formatted }),
+            keepalive: true,
+          });
+        } catch {
+          // ignore
+        }
+      }
+
+      e.preventDefault();
+      e.returnValue = "คุณกำลังทำข้อสอบอยู่ ต้องการออกจากหน้านี้หรือไม่?";
+      return e.returnValue;
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [answers, data, examId, submitMut.isPending]);
 
   // Fullscreen Change Listener
   useEffect(() => {
@@ -198,12 +265,34 @@ export default function StudentExamTakePage() {
     doSubmit();
   };
 
-  const handleAnswerChange = (qId, val) => {
+  const handleAnswerChange = (qId, val, isInstant = false) => {
     isDirtyRef.current = true;
-    setAnswers((prev) => ({ ...prev, [qId]: val }));
+    const nextAnswers = { ...answers, [qId]: val };
+    setAnswers(nextAnswers);
+
+    // 1. Instant local persistence (0ms)
+    try {
+      safeStorage.setItem(storageKey, JSON.stringify(nextAnswers));
+    } catch {
+      // ignore
+    }
+
+    // 2. Server persistence
+    clearTimeout(debounceTimerRef.current);
+    if (isInstant) {
+      // Instant server save for MCQ choice clicks & reset code
+      runAutoSave(true, nextAnswers);
+    } else {
+      // 2-second debounce for continuous code/text typing
+      debounceTimerRef.current = setTimeout(() => {
+        runAutoSave(true, nextAnswers);
+      }, 2000);
+    }
   };
 
   const handleRunSampleTests = async (questionId) => {
+    // Auto-save code before execution
+    runAutoSave(true);
     setRunningCode((prev) => ({ ...prev, [questionId]: true }));
     try {
       const code = answers[questionId] || "";
@@ -227,6 +316,8 @@ export default function StudentExamTakePage() {
   };
 
   const handleRunCustomInput = async (questionId) => {
+    // Auto-save code before execution
+    runAutoSave(true);
     setRunningCode((prev) => ({ ...prev, [questionId]: true }));
     try {
       const code = answers[questionId] || "";
@@ -329,9 +420,13 @@ export default function StudentExamTakePage() {
         </div>
 
         <div className="flex items-center gap-4">
-          {/* Auto-save Status Badge */}
+          {/* Auto-save & Online Status Badge */}
           <div className="hidden sm:block text-right">
-            {isSaving ? (
+            {!isOnline ? (
+              <span className="text-xs text-rose-600 font-bold bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full animate-pulse">
+                ⚠️ ออฟไลน์ (บันทึกในเครื่อง)
+              </span>
+            ) : isSaving ? (
               <span className="text-xs text-indigo-500 animate-pulse font-medium">
                 💾 กำลังบันทึกร่าง...
               </span>
@@ -372,6 +467,9 @@ export default function StudentExamTakePage() {
           <span> จากทั้งหมด {questions?.length} ข้อ</span>
         </div>
         <div className="flex items-center gap-3">
+          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-medium">
+            🛡️ บันทึกบนเซิร์ฟเวอร์เรียลไทม์ (รองรับ Incognito)
+          </span>
           {exam?.allow_paste === 0 && (
             <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded font-medium">
               🚫 ไม่อนุญาตให้คัดลอก/วางโค้ด
@@ -394,12 +492,65 @@ export default function StudentExamTakePage() {
           )}
           <button
             type="button"
-            onClick={runAutoSave}
+            onClick={() => runAutoSave(true)}
             disabled={isSaving}
             className="text-indigo-600 hover:underline font-medium"
           >
             {isSaving ? "กำลังบันทึก..." : "💾 กดบันทึกร่างทันที"}
           </button>
+        </div>
+      </div>
+
+      {/* Offline Alert Banner */}
+      {!isOnline && (
+        <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 flex items-start gap-3 text-rose-800 shadow-md">
+          <span className="text-2xl">⚠️</span>
+          <div className="text-xs space-y-1">
+            <p className="font-bold text-sm">การเชื่อมต่ออินเทอร์เน็ตขาดหาย (Offline)</p>
+            <p className="text-rose-700">
+              ไม่ต้องกังวล! คำตอบทั้งหมดของคุณถูกบันทึกไว้อย่างปลอดภัยในเบราว์เซอร์นี้แล้ว กรุณาทำข้อสอบต่อไปตามปกติ และ<strong>อย่าปิดหน้าต่างนี้</strong> ระบบจะส่งข้อมูลขึ้นเซิร์ฟเวอร์ทันทีเมื่อเน็ตกลับมาเชื่อมต่อ
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Question Navigator Grid */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-gray-500">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-gray-800">📑 แผงนำทางข้อสอบ</span>
+            <span className="text-gray-400">|</span>
+            <span>ตอบแล้ว <strong className="text-emerald-600 font-bold">{answeredCount}</strong> / {questions?.length} ข้อ</span>
+          </div>
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-md bg-emerald-600 inline-block"></span> ตอบแล้ว
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-md bg-gray-100 border border-gray-300 inline-block"></span> ยังไม่ตอบ
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          {questions?.map((q, idx) => {
+            const hasAns = answers[q.id] && String(answers[q.id]).trim().length > 0;
+            return (
+              <button
+                key={q.id}
+                type="button"
+                onClick={() => scrollToQuestion(q.id)}
+                className={`w-9 h-9 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center cursor-pointer ${
+                  hasAns
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+                    : "bg-gray-50 hover:bg-gray-200 text-gray-700 border border-gray-200"
+                }`}
+                title={`ข้อที่ ${idx + 1} (${hasAns ? "ตอบแล้ว" : "ยังไม่ตอบ"}) - คลิกเพื่อข้ามไปทำข้อนี้`}
+              >
+                {idx + 1}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -414,7 +565,8 @@ export default function StudentExamTakePage() {
           return (
             <div
               key={q.id}
-              className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4 shadow-sm hover:border-gray-300 transition-colors"
+              id={`question-${q.id}`}
+              className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4 shadow-sm hover:border-gray-300 transition-colors scroll-mt-24"
             >
               {/* Question Header */}
               <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
@@ -458,7 +610,7 @@ export default function StudentExamTakePage() {
                           name={`question_${q.id}`}
                           value={optId}
                           checked={isSelected}
-                          onChange={() => handleAnswerChange(q.id, optId)}
+                          onChange={() => handleAnswerChange(q.id, optId, true)}
                           className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500 cursor-pointer"
                         />
                         <span className="text-sm">{optVal}</span>
@@ -478,7 +630,7 @@ export default function StudentExamTakePage() {
                     {q.starter_code && (
                       <button
                         type="button"
-                        onClick={() => handleAnswerChange(q.id, q.starter_code)}
+                        onClick={() => handleAnswerChange(q.id, q.starter_code, true)}
                         className="text-xs text-gray-400 hover:text-indigo-600 underline"
                       >
                         คืนค่าโค้ดตั้งต้น
@@ -488,7 +640,7 @@ export default function StudentExamTakePage() {
 
                   <CodeEditor
                     value={currentVal}
-                    onChange={(val) => handleAnswerChange(q.id, val)}
+                    onChange={(val) => handleAnswerChange(q.id, val, false)}
                     allowPaste={exam?.allow_paste !== 0}
                     placeholder="// เขียนโค้ด Java ที่นี่... (กด Tab เพื่อย่อหน้าได้)"
                     minHeight="260px"
@@ -718,7 +870,8 @@ export default function StudentExamTakePage() {
                   <textarea
                     rows={4}
                     value={currentVal}
-                    onChange={(e) => handleAnswerChange(q.id, e.target.value)}
+                    onChange={(e) => handleAnswerChange(q.id, e.target.value, false)}
+                    onBlur={() => runAutoSave(true)}
                     placeholder="พิมพ์คำตอบของคุณที่นี่..."
                     className="w-full text-sm border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   />

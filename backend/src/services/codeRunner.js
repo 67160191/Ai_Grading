@@ -26,6 +26,65 @@ function releaseSlot() {
 }
 
 /**
+ * Security validator to block dangerous system APIs during coding exams
+ */
+function validateCodeSecurity(code, lang) {
+  if (!code) return null;
+
+  // Normalize unicode escapes (e.g. \u0052untime -> Runtime) to prevent obfuscation bypasses
+  const normalizedCode = code.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) =>
+    String.fromCharCode(parseInt(hex, 16)),
+  );
+
+  if (lang === "java") {
+    const dangerousPatterns = [
+      { pattern: /\bProcessBuilder\b/, reason: "ProcessBuilder is forbidden" },
+      { pattern: /\bRuntime\s*\.\s*getRuntime/, reason: "Runtime process execution is forbidden" },
+      { pattern: /\bjava\s*\.\s*lang\s*\.\s*reflect\b/, reason: "Java Reflection is forbidden" },
+      { pattern: /\bClass\s*\.\s*forName\b/, reason: "Class.forName reflection is forbidden" },
+      { pattern: /\bgetDeclared(Method|Field|Constructor)s?\b/, reason: "Reflection inspection is forbidden" },
+      { pattern: /\bMethodHandles?\b/, reason: "MethodHandle reflection is forbidden" },
+      { pattern: /\bjava\s*\.\s*net\b/, reason: "Network access is forbidden" },
+      { pattern: /\bSocket\b|\bServerSocket\b/, reason: "Socket networking is forbidden" },
+      { pattern: /\bHttpURLConnection\b|\bHttpClient\b|\bURL\b/, reason: "Network connection is forbidden" },
+      { pattern: /\bSystem\s*\.\s*exit\b/, reason: "System.exit() is forbidden in automated grading" },
+      { pattern: /\bSystem\s*\.\s*getenv\b/, reason: "System.getenv() access is forbidden" },
+      { pattern: /\bSystem\s*\.\s*getProperties\b/, reason: "System properties access is forbidden" },
+      { pattern: /\bSystem\s*\.\s*set(Property|Properties|SecurityManager)\b/, reason: "System configuration modification is forbidden" },
+      { pattern: /\bsun\s*\.\s*misc\s*\.\s*Unsafe\b|\bjdk\s*\.\s*internal\b/, reason: "Unsafe memory operations are forbidden" },
+      { pattern: /\bjava\s*\.\s*io\s*\.\s*(File|FileInputStream|FileOutputStream|FileReader|FileWriter|RandomAccessFile)\b/, reason: "File filesystem access is forbidden" },
+      { pattern: /\b(FileInputStream|FileOutputStream|FileReader|FileWriter|RandomAccessFile)\b/, reason: "Direct file stream access is forbidden" },
+      { pattern: /\bnew\s+File\s*\(/, reason: "Direct File creation is forbidden" },
+      { pattern: /\bjava\s*\.\s*nio\s*\.\s*file\b/, reason: "NIO filesystem access is forbidden" },
+      { pattern: /\b(Paths?\s*\.\s*get|Files\s*\.\s*(read|write|delete|create|new|walk|list|lines))\b/, reason: "Filesystem operations are forbidden" },
+      { pattern: /\bClassLoader\b/, reason: "Custom ClassLoader is forbidden" },
+    ];
+    for (const { pattern, reason } of dangerousPatterns) {
+      if (pattern.test(normalizedCode)) {
+        return reason;
+      }
+    }
+  } else if (lang === "python" || lang === "python3") {
+    const dangerousPatterns = [
+      { pattern: /\bimport\s+subprocess\b|\bfrom\s+subprocess\b/, reason: "Subprocess execution is forbidden" },
+      { pattern: /\bimport\s+os\b|\bfrom\s+os\b/, reason: "OS module is forbidden" },
+      { pattern: /\bimport\s+sys\b|\bfrom\s+sys\b/, reason: "Sys module is forbidden" },
+      { pattern: /\bimport\s+socket\b|\bfrom\s+socket\b/, reason: "Socket networking is forbidden" },
+      { pattern: /\bimport\s+urllib\b|\bimport\s+requests\b|\bimport\s+http\b/, reason: "Network requests are forbidden" },
+      { pattern: /\b__import__\b/, reason: "Dynamic imports are forbidden" },
+      { pattern: /\bopen\s*\(/, reason: "File I/O (open) is forbidden" },
+      { pattern: /\b(eval|exec)\s*\(/, reason: "Dynamic evaluation (eval/exec) is forbidden" },
+    ];
+    for (const { pattern, reason } of dangerousPatterns) {
+      if (pattern.test(normalizedCode)) {
+        return reason;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Execute code with input in an isolated temporary directory with timeout.
  * Supported languages: 'java', 'python', 'python3', 'javascript', 'node'
  */
@@ -36,8 +95,19 @@ export async function executeCode({
   driverCode = null,
   timeoutMs = 4000,
 }) {
-  await acquireSlot();
   const lang = (language || "java").toLowerCase();
+
+  const secError = validateCodeSecurity(code, lang);
+  if (secError) {
+    return {
+      status: "Security Error",
+      output: "",
+      error: `Security Violation: ${secError}`,
+      executionTimeMs: 0,
+    };
+  }
+
+  await acquireSlot();
   const runId = randomBytes(8).toString("hex");
   const tempDir = path.join(os.tmpdir(), `coderunner_${runId}`);
 
@@ -387,7 +457,16 @@ function runProcess(cmd, args, cwd, stdinText, timeoutMs) {
     let stderr = "";
     let timedOut = false;
 
-    const child = spawn(cmd, args, { cwd, shell: false });
+    // Clean execution environment: never pass application secrets (JWT_SECRET, etc.) to student code
+    const cleanEnv = {
+      PATH: process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "en_US.UTF-8",
+      JAVA_HOME: process.env.JAVA_HOME || "",
+      TZ: "Asia/Bangkok",
+    };
+
+    const child = spawn(cmd, args, { cwd, shell: false, env: cleanEnv });
 
     const timer = setTimeout(() => {
       timedOut = true;

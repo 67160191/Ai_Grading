@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import db, { nowUTC } from "../db/database.js";
 import { authenticate, requireRole } from "../middleware/auth.js";
 import { logActivity } from "../middleware/logger.js";
@@ -8,6 +9,16 @@ import { executeCode, runTestCases } from "../services/codeRunner.js";
 import { seededShuffle } from "../utils/shuffle.js";
 
 const router = Router();
+const MAX_ANSWER_CHARS = 100000; // 100 KB max per answer text
+
+const runCodeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => (req.user?.id ? `user_${req.user.id}` : (req.ip || "unknown")),
+  message: { error: "คุณกดทดสอบโค้ดบ่อยเกินไป กรุณารอสักครู่ (ไม่เกิน 30 ครั้ง/นาที)" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // ==========================================
 // TEACHER & COURSE EXAM LISTING
@@ -615,11 +626,13 @@ router.post("/exams/:id/autosave", authenticate, requireRole("student"), (req, r
     const tx = db.transaction(() => {
       if (Array.isArray(answers)) {
         for (const a of answers) {
-          upsertStmt.run(submission.id, a.question_id, String(a.answer ?? ""), nowUTC());
+          const text = String(a.answer ?? "");
+          upsertStmt.run(submission.id, a.question_id, text.length > MAX_ANSWER_CHARS ? text.slice(0, MAX_ANSWER_CHARS) : text, nowUTC());
         }
       } else {
         for (const [qId, ansText] of Object.entries(answers)) {
-          upsertStmt.run(submission.id, qId, String(ansText ?? ""), nowUTC());
+          const text = String(ansText ?? "");
+          upsertStmt.run(submission.id, qId, text.length > MAX_ANSWER_CHARS ? text.slice(0, MAX_ANSWER_CHARS) : text, nowUTC());
         }
       }
     });
@@ -682,7 +695,8 @@ router.post("/exams/:id/submit", authenticate, requireRole("student"), (req, res
       const q = qMap.get(ans.question_id);
       if (!q) continue;
 
-      const rawAns = ans.answer !== undefined && ans.answer !== null ? String(ans.answer).trim() : "";
+      const fullAns = ans.answer !== undefined && ans.answer !== null ? String(ans.answer).trim() : "";
+      const rawAns = fullAns.length > MAX_ANSWER_CHARS ? fullAns.slice(0, MAX_ANSWER_CHARS) : fullAns;
       let autoScore = 0;
       let manualScore = null;
       let isCorrect = null;
@@ -816,6 +830,96 @@ router.get("/exams/:id/submissions", authenticate, requireRole("teacher", "admin
   };
 
   res.json({ exam, course, students, stats });
+});
+
+// POST /api/exams/:id/submissions/:submissionId/force-submit - Teacher forces submission from draft
+router.post("/exams/:id/submissions/:submissionId/force-submit", authenticate, requireRole("teacher", "admin"), (req, res) => {
+  const { id, submissionId } = req.params;
+  const exam = db.prepare("SELECT * FROM exams WHERE id = ?").get(id);
+  if (!exam) return res.status(404).json({ error: "ไม่พบห้องสอบนี้" });
+
+  const submission = db.prepare("SELECT * FROM exam_submissions WHERE id = ? AND exam_id = ?").get(submissionId, id);
+  if (!submission) return res.status(404).json({ error: "ไม่พบข้อมูลการสอบของนิสิตคนนี้" });
+
+  if (submission.status !== "in_progress") {
+    return res.status(400).json({ error: "การสอบนี้ไม่ได้อยู่ในสถานะกำลังทำข้อสอบ (ส่งไปแล้ว)" });
+  }
+
+  const questions = db.prepare("SELECT * FROM exam_questions WHERE exam_id = ?").all(id);
+  const qMap = new Map(questions.map((q) => [q.id, q]));
+
+  let totalMaxScore = 0;
+  let totalAutoScore = 0;
+  let hasManualGradingQuestions = false;
+
+  questions.forEach((q) => {
+    totalMaxScore += q.points;
+    if (q.question_type !== "mcq") {
+      hasManualGradingQuestions = true;
+    }
+  });
+
+  const savedAnswers = db.prepare("SELECT * FROM exam_answers WHERE submission_id = ?").all(submission.id);
+  const now = nowUTC();
+
+  const updateAnsStmt = db.prepare(`
+    UPDATE exam_answers
+    SET auto_score = ?, manual_score = ?, is_correct = ?
+    WHERE id = ?
+  `);
+
+  const tx = db.transaction(() => {
+    for (const ans of savedAnswers) {
+      const q = qMap.get(ans.question_id);
+      if (!q) continue;
+
+      if (q.question_type === "mcq") {
+        let opts = [];
+        try {
+          opts = JSON.parse(q.options || "[]");
+        } catch {
+          opts = [];
+        }
+        const correctOptId = String(q.correct_option || "").trim();
+        const correctOptIdx = parseInt(correctOptId) - 1;
+        const correctOptText = (correctOptIdx >= 0 && correctOptIdx < opts.length)
+          ? String(typeof opts[correctOptIdx] === "string" ? opts[correctOptIdx] : opts[correctOptIdx]?.text || "").trim()
+          : "";
+
+        const rawAns = String(ans.student_answer || "").trim();
+        const isMatch = (correctOptId && rawAns === correctOptId) ||
+                        (correctOptText && rawAns === correctOptText);
+
+        const autoScore = isMatch ? q.points : 0;
+        const manualScore = isMatch ? q.points : 0;
+        const isCorrect = isMatch ? 1 : 0;
+
+        totalAutoScore += autoScore;
+        updateAnsStmt.run(autoScore, manualScore, isCorrect, ans.id);
+      }
+    }
+
+    const finalStatus = hasManualGradingQuestions ? "submitted" : "graded";
+    db.prepare(`
+      UPDATE exam_submissions
+      SET submitted_at = ?,
+          status = ?,
+          score = ?,
+          max_score = ?
+      WHERE id = ?
+    `).run(
+      now,
+      finalStatus,
+      totalAutoScore,
+      totalMaxScore,
+      submission.id
+    );
+  });
+
+  tx();
+
+  const updatedSub = db.prepare("SELECT * FROM exam_submissions WHERE id = ?").get(submission.id);
+  res.json({ message: "ส่งข้อสอบแทนนิตสิตเรียบร้อยแล้ว", submission: updatedSub });
 });
 
 // GET /api/exams/:id/export - Export ผลการสอบเป็น CSV หรือ XLS (teacher & admin only)
@@ -1334,7 +1438,7 @@ router.post(
 );
 
 // POST /api/exams/run-code - Interactive runner for student or teacher
-router.post("/exams/run-code", authenticate, async (req, res) => {
+router.post("/exams/run-code", authenticate, runCodeLimiter, async (req, res) => {
   const { question_id, code, language = "java", custom_input } = req.body;
   if (!question_id) return res.status(400).json({ error: "ต้องระบุ question_id" });
 

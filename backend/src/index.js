@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { readFileSync, mkdirSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -28,10 +29,52 @@ mkdirSync(join(__dirname, "uploads"), { recursive: true });
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const corsOrigin = process.env.FRONTEND_URL ?? "http://localhost:5173";
+// Trust reverse proxy (Nginx) so req.ip and X-Forwarded-For reflect true client IP
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+// Enhanced Helmet headers
 app.use(helmet());
-app.use(cors({ origin: corsOrigin, credentials: true }));
-app.use(express.json());
+
+// Global rate limiter to protect against DDoS or crawling (1,200 requests/min per IP)
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 1200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "คำขอมากเกินไป กรุณารอสักครู่แล้วลองใหม่" },
+});
+app.use("/api", globalLimiter);
+
+// Robust CORS supporting local development and campus LAN IPs
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "http://localhost:8800",
+  "http://localhost:5173",
+  "http://127.0.0.1:8800",
+  "http://127.0.0.1:5173",
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (such as same-origin proxies, curl, mobile)
+      if (!origin) return callback(null, true);
+      if (
+        allowedOrigins.includes(origin) ||
+        /^http:\/\/10\.\d+\.\d+\.\d+(:\d+)?$/.test(origin) ||
+        /^http:\/\/192\.168\.\d+\.\d+(:\d+)?$/.test(origin) ||
+        /^http:\/\/localhost(:\d+)?$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
+    credentials: true,
+  }),
+);
+
+app.use(express.json({ limit: "5mb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", version, timestamp: new Date().toISOString() });

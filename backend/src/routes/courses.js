@@ -1195,6 +1195,43 @@ router.post(
   },
 );
 
+// POST /api/courses/:id/enroll-all - Enroll all existing students into this course
+router.post(
+  "/:id/enroll-all",
+  authenticate,
+  requireRole("teacher", "admin"),
+  (req, res) => {
+    const course = db
+      .prepare("SELECT * FROM courses WHERE id = ?")
+      .get(req.params.id);
+    if (!course) return res.status(404).json({ error: "ไม่พบรายวิชานี้" });
+
+    const result = db
+      .prepare(
+        `INSERT INTO enrollments (student_id, course_id, enrolled_at)
+         SELECT id, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         FROM users
+         WHERE role = 'student'
+           AND id NOT IN (SELECT student_id FROM enrollments WHERE course_id = ?)`,
+      )
+      .run(course.id, course.id);
+
+    logActivity({
+      userId: req.user.id,
+      action: "enroll_all_students",
+      entity: "course",
+      entityId: course.id,
+      detail: { enrolled_count: result.changes },
+      ip: req.ip,
+    });
+
+    res.json({
+      message: `ดึงนิสิตเข้าวิชาเรียบร้อยแล้ว (${result.changes} คน)`,
+      enrolled_count: result.changes,
+    });
+  },
+);
+
 // GET /api/courses/my-data — นิสิต export ข้อมูลทั้งหมดของตัวเอง (PDPA Data Subject Right)
 router.get("/my-data", authenticate, requireRole("student"), (req, res) => {
   const studentId = req.user.id;

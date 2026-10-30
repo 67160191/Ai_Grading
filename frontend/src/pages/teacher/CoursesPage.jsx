@@ -11,6 +11,7 @@ import {
   archiveCourse,
   getTeacherSummary,
 } from "../../api/courses";
+import safeStorage from "../../utils/storage";
 
 export default function CoursesPage() {
   const qc = useQueryClient();
@@ -128,12 +129,12 @@ export default function CoursesPage() {
   const [duplicateModal, setDuplicateModal] = useState(null); // { course }
   const [duplicateSemester, setDuplicateSemester] = useState("");
   const [filterSemester, setFilterSemester] = useState(
-    () => localStorage.getItem("teacher_semester_filter") || "",
+    () => safeStorage.getItem("teacher_semester_filter") || "",
   );
 
   const setFilterSemesterPersist = (s) => {
     setFilterSemester(s);
-    localStorage.setItem("teacher_semester_filter", s);
+    safeStorage.setItem("teacher_semester_filter", s);
   };
 
   const { data, isLoading } = useQuery({

@@ -13,6 +13,7 @@ import {
   getExamSimilarity,
   testCaseGrade,
   batchTestCaseGrade,
+  forceSubmitExam,
 } from "../../api/exams";
 import CodeEditor from "../../components/CodeEditor";
 
@@ -34,10 +35,12 @@ export default function ExamGradingPage() {
   const [loadingAiQId, setLoadingAiQId] = useState(null);
   const [loadingTcQId, setLoadingTcQId] = useState(null);
   const [tcResultsMap, setTcResultsMap] = useState({});
+  const [autoRefresh, setAutoRefresh] = useState(false);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["exam-submissions", examId],
     queryFn: () => getExamSubmissions(examId),
+    refetchInterval: autoRefresh ? 15000 : false,
   });
 
   const { data: subDetailData, isLoading: subDetailLoading } = useQuery({
@@ -51,6 +54,28 @@ export default function ExamGradingPage() {
     queryFn: () => getExamSimilarity(examId),
     enabled: showSimilarityModal,
   });
+
+  const forceSubmitMut = useMutation({
+    mutationFn: (subId) => forceSubmitExam(examId, subId),
+    onSuccess: (res) => {
+      showToast(res.message || "ส่งข้อสอบแทนนิตสิตเรียบร้อยแล้ว", "success");
+      qc.invalidateQueries({ queryKey: ["exam-submissions", examId] });
+    },
+    onError: (err) => {
+      showToast(err.response?.data?.error || "ไม่สามารถส่งข้อสอบแทนได้", "error");
+    },
+  });
+
+  const handleForceSubmit = (student) => {
+    if (!student.submission_id) return;
+    if (
+      window.confirm(
+        `ยืนยันการส่งข้อสอบแทน "${student.student_name}" (${student.student_username})?\n\nระบบจะนำคำตอบที่บันทึกร่างล่าสุดมาคิดคะแนนและเปลี่ยนสถานะเป็นส่งแล้ว`
+      )
+    ) {
+      forceSubmitMut.mutate(student.submission_id);
+    }
+  };
 
   const gradeMut = useMutation({
     mutationFn: (payload) => gradeExamSubmission(selectedSubId, payload),
@@ -427,8 +452,47 @@ export default function ExamGradingPage() {
 
       {/* Students Submissions Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-800">รายชื่อนิสิตและสถานะการสอบ</h2>
+        <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-gray-800">รายชื่อนิสิตและสถานะการสอบสด</h2>
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              <span className="text-xs px-2.5 py-1 bg-gray-100 text-gray-700 rounded-lg font-medium">
+                ทั้งหมด {students?.length || 0} คน
+              </span>
+              <span className="text-xs px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg font-medium">
+                ⚡ กำลังทำ {students?.filter((s) => s.status === "in_progress").length || 0} คน
+              </span>
+              <span className="text-xs px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-medium">
+                ส่งแล้ว {students?.filter((s) => s.status === "submitted").length || 0} คน
+              </span>
+              <span className="text-xs px-2.5 py-1 bg-green-50 text-green-700 border border-green-200 rounded-lg font-medium">
+                ✓ ตรวจแล้ว {students?.filter((s) => s.status === "graded").length || 0} คน
+              </span>
+              <span className="text-xs px-2.5 py-1 bg-gray-50 text-gray-500 border border-gray-200 rounded-lg">
+                ยังไม่เข้า {students?.filter((s) => !s.submission_id).length || 0} คน
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end md:self-auto">
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg border border-gray-200 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                className="w-3.5 h-3.5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+              />
+              <span>🔄 มอนิเตอร์สด (15s)</span>
+              {autoRefresh && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>}
+            </label>
+            <button
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors flex items-center gap-1 shadow-xs"
+            >
+              <span>{isFetching ? "กำลังดึงข้อมูล..." : "🔄 รีเฟรช"}</span>
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -482,6 +546,11 @@ export default function ExamGradingPage() {
                             ✓ ตรวจแล้ว
                           </span>
                         ) : null}
+                        {s.ip_address && (
+                          <div className="text-[11px] font-mono text-gray-400 mt-1 flex items-center gap-1" title="IP เครื่องที่ใช้เข้าสอบ">
+                            <span className="text-[10px]">🌐</span> {s.ip_address}
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-3 font-semibold">
                         {s.score != null ? (
@@ -499,6 +568,15 @@ export default function ExamGradingPage() {
                             className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
                           >
                             {isGraded ? "ดู / แก้ไขผลตรวจ" : "📝 ตรวจข้อสอบ"}
+                          </button>
+                        ) : inProgress ? (
+                          <button
+                            onClick={() => handleForceSubmit(s)}
+                            disabled={forceSubmitMut.isPending}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition-colors shadow-xs"
+                            title="บังคับส่งข้อสอบจากคำตอบที่บันทึกร่างไว้ล่าสุดแทนนิตสิต"
+                          >
+                            ⚡ ส่งข้อสอบแทน
                           </button>
                         ) : (
                           <span className="text-xs text-gray-300">-</span>
@@ -529,6 +607,11 @@ export default function ExamGradingPage() {
                   {subDetailData?.submission?.submitted_at
                     ? new Date(subDetailData.submission.submitted_at).toLocaleString("th-TH")
                     : "-"}
+                  {subDetailData?.submission?.ip_address && (
+                    <span className="ml-2 font-mono text-gray-400">
+                      (IP: {subDetailData.submission.ip_address})
+                    </span>
+                  )}
                 </p>
               </div>
               <button

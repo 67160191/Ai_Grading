@@ -9,6 +9,7 @@ import {
 } from "../../api/assignments";
 import { getRubric } from "../../api/grading";
 import DrawingCanvas from "../../components/DrawingCanvas";
+import safeStorage from "../../utils/storage";
 
 export default function StudentAssignmentPage() {
   const { assignmentId } = useParams();
@@ -79,7 +80,7 @@ export default function StudentAssignmentPage() {
       const response = await fetch("/api/assignments/extract-text", {
         method: "POST",
         body: formData,
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        headers: { Authorization: `Bearer ${safeStorage.getItem("token")}` },
       });
 
       if (!response.ok) {

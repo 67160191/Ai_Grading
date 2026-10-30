@@ -10,7 +10,6 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_SECRET environment variable is required");
 
 // Rate limiters for registration and login endpoints to prevent abuse and brute-force attacks
-// คำนวนอย่างไร
 const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -21,7 +20,13 @@ const registerLimiter = rateLimit({
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 150,
+  max: 20, // Max 20 failed attempts per username+IP in 15 minutes
+  skipSuccessfulRequests: true, // Crucial: legitimate student logins never count against the limit
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket?.remoteAddress || "ip";
+    const user = req.body?.username ? String(req.body.username).trim().toLowerCase() : "";
+    return user ? `${ip}_${user}` : ip;
+  },
   message: { error: "เข้าสู่ระบบผิดพลาดบ่อยเกินไป กรุณารอ 15 นาทีแล้วลองใหม่" },
   standardHeaders: true,
   legacyHeaders: false,
